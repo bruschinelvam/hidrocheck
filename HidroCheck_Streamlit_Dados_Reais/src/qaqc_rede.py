@@ -9,6 +9,9 @@ import numpy as np
 import pandas as pd
 
 DATA_REF = pd.Timestamp('2026-08-06')
+JANELA_QAQC_OUTLIER_DIAS = 180
+JANELA_QAQC_AUTO_DIAS = 90
+JANELA_QAQC_MANUAL_DIAS = 180
 
 # Escopo espacial do Complexo Germano, definido pela extensão da imagem aérea
 # fornecida para o projeto (SIRGAS 2000 / UTM 23S, EPSG:31983).
@@ -91,6 +94,29 @@ def _conservative_outliers(g: pd.DataFrame, min_jump: float = 2.0) -> pd.DataFra
     out = d.iloc[idx].copy()
     out['magnitude_aprox_m'] = mag
     return out
+
+
+def _ptr_mais_proximo(c: pd.Series, cad: pd.DataFrame) -> tuple[str, float | None]:
+    """Retorna o poço tubular ativo mais próximo como contexto hidrogeológico.
+
+    A proximidade NÃO altera o status de QA/QC; serve apenas para interpretar
+    tendências de rebaixamento/recuperação junto à operação.
+    """
+    x = pd.to_numeric(c.get('X(m)'), errors='coerce')
+    y = pd.to_numeric(c.get('Y(m)'), errors='coerce')
+    if pd.isna(x) or pd.isna(y):
+        return '', None
+    ptr = cad[(cad['Situacao Atual'] == 'Ativo') & (cad['Natureza do Ponto'] == 'Poco Tubular')].copy()
+    if ptr.empty:
+        return '', None
+    px = pd.to_numeric(ptr['X(m)'], errors='coerce')
+    py = pd.to_numeric(ptr['Y(m)'], errors='coerce')
+    d = np.sqrt((px - float(x)) ** 2 + (py - float(y)) ** 2)
+    if d.isna().all():
+        return '', None
+    idx = d.idxmin()
+    tag = str(ptr.loc[idx, 'TAG HGA'])
+    return tag, float(d.loc[idx])
 
 
 def carregar_bases(dir_dados: str | Path) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -184,7 +210,13 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
             recebimento = 'INTERROMPIDO' if dias_sem > crit else ('ATRASADO' if dias_sem > warn else 'RECEBENDO')
 
         profundidade = pd.to_numeric(c.get('Profundidade(m)'), errors='coerce')
-        rep_n, rep_dias, rep_val = _terminal_run(primary, 'na_m')
+
+        # O QA/QC operacional olha para o estado ATUAL do instrumento, e não para
+        # toda a série histórica. A série completa fica preservada para a análise
+        # hidrogeológica (rebaixamento, recuperação, chuva, bombeamento etc.).
+        janela_flat = JANELA_QAQC_AUTO_DIAS if fonte == 'Automático' else JANELA_QAQC_MANUAL_DIAS
+        primary_recente = primary[primary['data'] >= DATA_REF - pd.Timedelta(days=janela_flat)].copy()
+        rep_n, rep_dias, rep_val = _terminal_run(primary_recente, 'na_m')
         rep_fundo = bool(pd.notna(profundidade) and rep_val is not None and abs(rep_val - profundidade) <= 0.10)
 
         # Poços tubulares têm comportamento operacional próprio. Zero automático persistente
@@ -192,7 +224,8 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
         zero_auto = False
         travado = False
         if natureza == 'Poco Tubular':
-            ga = g[(g['tipo_dado'] == 'Medido Automatico') & g['na_m'].notna()].copy()
+            ga = g[(g['tipo_dado'] == 'Medido Automatico') & g['na_m'].notna() &
+                   (g['data'] >= DATA_REF - pd.Timedelta(days=JANELA_QAQC_AUTO_DIAS))].copy()
             z_n, z_dias, z_val = _terminal_run(ga, 'na_m')
             zero_auto = bool(z_val is not None and abs(z_val) < 1e-9 and z_n >= 7 and z_dias >= 7)
         elif not virtual and not rep_fundo:
@@ -201,12 +234,15 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
             elif fonte == 'Manual':
                 travado = rep_n >= 6 and rep_dias >= 90
 
-        # Outlier: conservador e só em instrumentos de monitoramento. Poço tubular
-        # pode variar dezenas de metros por regime de bombeamento, portanto não entra.
+        # Outliers também são um alerta RECENTE. Eventos antigos permanecem visíveis
+        # na série histórica, mas não geram alerta operacional atual.
         if natureza == 'Poco Tubular':
             out = g.iloc[0:0].copy()
         else:
-            out = _conservative_outliers(primary, min_jump=2.0)
+            recent_outlier = primary[primary['data'] >= DATA_REF - pd.Timedelta(days=JANELA_QAQC_OUTLIER_DIAS)].copy()
+            out = _conservative_outliers(recent_outlier, min_jump=2.0)
+
+        ptr_proximo, dist_ptr_m = _ptr_mais_proximo(c, cad)
 
         na_neg = int((pd.to_numeric(g['na_m'], errors='coerce') < 0).sum()) if len(g) else 0
         mismatch = 0
@@ -231,7 +267,7 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
                 score += 3
 
             if travado:
-                motivos.append(f'Dado possivelmente travado ({rep_n} leituras idênticas por {rep_dias} dias)')
+                motivos.append(f'Últimas leituras possivelmente travadas: {rep_n} valores idênticos consecutivos por {rep_dias} dias')
                 score += 7
             if rep_fundo and rep_n >= 4:
                 motivos.append(f'Leitura repetida no limite de profundidade ({rep_val:.2f} m ≈ {profundidade:.2f} m); pode indicar ponto seco')
@@ -240,7 +276,7 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
                 motivos.append('Zero automático persistente em poço tubular; conferir significado/integração do canal')
                 score += 3
             if len(out):
-                motivos.append(f'{len(out)} outlier(s) pontual(is) forte(s) para revisão')
+                motivos.append(f'{len(out)} outlier(s) forte(s) nas últimas {JANELA_QAQC_OUTLIER_DIAS} dias para revisão')
                 score += 1 if len(out) <= 2 else 2
             if len(futuras):
                 motivos.append(f'{len(futuras)} registro(s) com data futura')
@@ -292,6 +328,9 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
             'datas_futuras': int(len(futuras)),
             'na_negativo': na_neg,
             'inconsistencia_cota': mismatch,
+            'janela_qaqc_dias': int(janela_flat),
+            'ptr_mais_proximo': ptr_proximo,
+            'dist_ptr_m': dist_ptr_m,
             'status_qaqc': status,
             'score': int(score),
             'motivos': ' | '.join(motivos) if motivos else 'Sem sinais automáticos relevantes',
