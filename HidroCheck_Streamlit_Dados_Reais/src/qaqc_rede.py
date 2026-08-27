@@ -10,6 +10,20 @@ import pandas as pd
 
 DATA_REF = pd.Timestamp('2026-08-06')
 
+# Escopo espacial do Complexo Germano, definido pela extensão da imagem aérea
+# fornecida para o projeto (SIRGAS 2000 / UTM 23S, EPSG:31983).
+GERMANO_XMIN = 648700.4479
+GERMANO_YMIN = 7760701.2652
+GERMANO_XMAX = 667298.2571
+GERMANO_YMAX = 7773899.3678
+
+
+def _filtrar_complexo_germano(cad: pd.DataFrame) -> pd.DataFrame:
+    x = pd.to_numeric(cad['X(m)'], errors='coerce')
+    y = pd.to_numeric(cad['Y(m)'], errors='coerce')
+    mask = x.between(GERMANO_XMIN, GERMANO_XMAX) & y.between(GERMANO_YMIN, GERMANO_YMAX)
+    return cad.loc[mask].copy()
+
 
 def _norm_tag(value: object) -> str:
     return re.sub(r'\s+', '', str(value or '')).upper()
@@ -86,6 +100,14 @@ def carregar_bases(dir_dados: str | Path) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     cad['inst_id'] = cad['TAG HGA'].map(_norm_tag)
     hga['inst_id'] = hga['Ponto'].map(_norm_tag)
+
+    # O HidroCheck desta versão é dedicado ao Complexo Germano. O filtro é
+    # aplicado antes do QA/QC e antes da exploração das séries, garantindo que
+    # todas as páginas trabalhem com o mesmo universo espacial.
+    cad = _filtrar_complexo_germano(cad)
+    ids_germano = set(cad['inst_id'].dropna().astype(str))
+    hga = hga[hga['inst_id'].isin(ids_germano)].copy()
+
     raw_data = hga['DATA_']
     if pd.api.types.is_datetime64_any_dtype(raw_data):
         hga['data'] = pd.to_datetime(raw_data, errors='coerce')
@@ -109,7 +131,7 @@ def carregar_bases(dir_dados: str | Path) -> tuple[pd.DataFrame, pd.DataFrame]:
 def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     cad, hga = carregar_bases(dir_dados)
 
-    # Escopo = instrumentos ativos cujo propósito é monitoramento hidrogeológico.
+    # Escopo = instrumentos do Complexo Germano, ativos e com propósito de monitoramento hidrogeológico.
     # Cava é um ativo/feição, não um instrumento de NA, então não entra no denominador.
     escopo = cad[(cad['Situacao Atual'] == 'Ativo') &
                  (cad['Proposito'] == 'Monitoramento Hidrogeologico') &
