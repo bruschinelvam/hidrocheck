@@ -7,11 +7,14 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / "src"
 OUT = ROOT / "out"
 ASSETS = ROOT / "assets"
+BASE_AEREA = ASSETS / "germano_base_aerea.jpg"
+BASE_AEREA_BOUNDS = {"xmin": 648700.4479, "ymin": 7760701.2652, "xmax": 667298.2571, "ymax": 7773899.3678}
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
@@ -395,17 +398,115 @@ def sector_card(nome: str, taxa: float | None) -> str:
 
 
 def plot_clean(fig: go.Figure, height: int | None = None) -> go.Figure:
+    # Cores explícitas para manter os gráficos legíveis mesmo quando o navegador
+    # ou o Streamlit estiverem em tema escuro.
     fig.update_layout(
-        paper_bgcolor="white",
-        plot_bgcolor="white",
-        font=dict(family="Segoe UI, Arial", color="#334155", size=12),
-        margin=dict(l=20, r=20, t=28, b=20),
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FFFFFF",
+        font=dict(family="Segoe UI, Arial", color="#17212B", size=12),
+        margin=dict(l=24, r=24, t=28, b=24),
         legend_title_text="",
+        legend=dict(font=dict(color="#17212B", size=12), bgcolor="rgba(255,255,255,0.92)"),
     )
     if height:
         fig.update_layout(height=height)
-    fig.update_xaxes(showgrid=True, gridcolor="#EEF2F6", zeroline=False, linecolor="#CBD5E1")
-    fig.update_yaxes(showgrid=True, gridcolor="#EEF2F6", zeroline=False, linecolor="#CBD5E1")
+    axis_style = dict(
+        showgrid=True,
+        gridcolor="#DDE5EC",
+        zeroline=False,
+        linecolor="#94A3B8",
+        tickfont=dict(color="#334155", size=12),
+        title_font=dict(color="#334155", size=13),
+    )
+    fig.update_xaxes(**axis_style)
+    fig.update_yaxes(**axis_style)
+    return fig
+
+
+def mapa_saude_interativo(df: pd.DataFrame, key_prefix: str, height: int = 520) -> go.Figure:
+    """Mapa QA/QC com filtro de localidade, rótulos e imagem aérea de Germano."""
+    base = df.dropna(subset=["x", "y"]).copy()
+    localidades = sorted([str(x) for x in base["localidade"].dropna().unique()])
+
+    c_filtro, c_rotulo, c_base = st.columns([1.35, 1, 1.05])
+    with c_filtro:
+        local = st.selectbox(
+            "Localidade",
+            ["Todas"] + localidades,
+            key=f"{key_prefix}_localidade",
+        )
+    with c_rotulo:
+        modo_rotulo = st.selectbox(
+            "Nomes no mapa",
+            ["Somente alertas", "Todos", "Nenhum"],
+            key=f"{key_prefix}_rotulos",
+        )
+    with c_base:
+        mostrar_base = st.toggle(
+            "Imagem aérea de Germano",
+            value=False,
+            key=f"{key_prefix}_base_aerea",
+            disabled=not BASE_AEREA.exists(),
+        )
+
+    if local != "Todas":
+        base = base[base["localidade"].astype(str) == local].copy()
+
+    if modo_rotulo == "Todos":
+        base["rotulo"] = base["instrumento"].astype(str)
+    elif modo_rotulo == "Somente alertas":
+        base["rotulo"] = base.apply(
+            lambda r: str(r["instrumento"]) if r["status_qaqc"] != "OK" else "", axis=1
+        )
+    else:
+        base["rotulo"] = ""
+
+    ordem = ["PRIORITÁRIO", "ATENÇÃO", "OBSERVAR", "OK"]
+    cores = {"PRIORITÁRIO": "#C6251E", "ATENÇÃO": "#E09A18", "OBSERVAR": "#5B6B7E", "OK": "#26843A"}
+    fig = px.scatter(
+        base,
+        x="x", y="y", color="status_qaqc", text="rotulo", hover_name="instrumento",
+        hover_data={
+            "localidade": True, "natureza": True, "recebimento": True,
+            "motivos": True, "x": ":.0f", "y": ":.0f", "rotulo": False
+        },
+        color_discrete_map=cores,
+        category_orders={"status_qaqc": ordem},
+        labels={"x": "UTM E (m)", "y": "UTM N (m)", "status_qaqc": "QA/QC"},
+    )
+
+    if mostrar_base and BASE_AEREA.exists():
+        imagem = Image.open(BASE_AEREA)
+        b = BASE_AEREA_BOUNDS
+        fig.add_layout_image(
+            dict(
+                source=imagem,
+                xref="x", yref="y",
+                x=b["xmin"], y=b["ymax"],
+                sizex=b["xmax"] - b["xmin"],
+                sizey=b["ymax"] - b["ymin"],
+                sizing="stretch",
+                opacity=0.82,
+                layer="below",
+                xanchor="left", yanchor="top",
+            )
+        )
+
+    fig.update_traces(
+        marker=dict(size=11, line=dict(width=1.35, color="#FFFFFF"), opacity=0.98),
+        textposition="top center",
+        textfont=dict(size=10, color="#101820", family="Segoe UI Semibold, Segoe UI, Arial"),
+        cliponaxis=False,
+    )
+    fig.update_yaxes(scaleanchor="x", scaleratio=1)
+    plot_clean(fig, height)
+    if mostrar_base:
+        fig.update_xaxes(showgrid=False)
+        fig.update_yaxes(showgrid=False)
+    fig.update_layout(
+        hoverlabel=dict(bgcolor="white", font_color="#17212B", font_size=12),
+        legend=dict(bgcolor="rgba(255,255,255,0.90)", bordercolor="#CBD5E1", borderwidth=1),
+    )
     return fig
 
 
@@ -499,30 +600,20 @@ else:
     tx = pd.DataFrame()
     tx_sig = pd.DataFrame()
 
-# KPIs principais: o projeto é sobre os resultados da operação do rebaixamento.
-if not tx.empty:
-    n_sig_monitor = int(((tx["significativo"]) & (~tx["bombeamento"])).sum())
-    med_norte = tx_sig.loc[tx_sig["localidade"] == "Alegria Norte", "taxa"].median() if not tx_sig.empty else float("nan")
-    med_sul = tx_sig.loc[tx_sig["localidade"] == "Alegria Sul", "taxa"].median() if not tx_sig.empty else float("nan")
-    kpi_cards([
-        ("Séries de tendência", f"{len(tx)}", "instrumentos do diagnóstico do rebaixamento", "info"),
-        ("Tendências significativas", f"{n_sig_monitor}", "monitoramento · Mann–Kendall p < 0,05", "ok"),
-        ("Alegria Norte", f"{med_norte:.2f} m/ano" if pd.notna(med_norte) else "—", "mediana · rebaixamento predominante", "danger"),
-        ("Alegria Sul", f"+{med_sul:.2f} m/ano" if pd.notna(med_sul) and med_sul >= 0 else (f"{med_sul:.2f} m/ano" if pd.notna(med_sul) else "—"), "mediana · recuperação predominante", "ok"),
-    ])
-else:
-    kpi_cards([
-        ("Instrumentos no escopo", f"{len(rede)}", "ativos de monitoramento hidrogeológico", "info"),
-        ("Físicos avaliados", f"{len(fisicos)}", "instrumentos físicos", "ok"),
-        ("Recebendo dados", f"{len(recebendo)}", "cadência compatível com o histórico", "ok"),
-        ("Prioridade alta", f"{len(prioritarios)}", "sinais atuais e acionáveis", "danger"),
-    ])
+# KPIs executivos: primeiro a confiabilidade da rede; depois, na aba própria, os resultados do rebaixamento.
+n_revisao = len(atencao) + len(observar) + len(prioritarios)
+kpi_cards([
+    ("Instrumentos avaliados", f"{len(fisicos)}", "rede física ativa no QA/QC", "info"),
+    ("Recebendo dados", f"{len(recebendo)}", "cadência compatível com o histórico", "ok"),
+    ("Para revisão", f"{n_revisao}", "atenção, observar ou prioridade", "warn"),
+    ("Prioridade alta", f"{len(prioritarios)}", "revisão recomendada primeiro", "danger"),
+])
 
-aba_visao, aba_op, aba_qc, aba_inst, aba_metodo = st.tabs([
+aba_visao, aba_qc, aba_inst, aba_op, aba_metodo = st.tabs([
     "Visão geral",
-    "Resultado do rebaixamento",
     "Saúde da rede",
-    "Instrumentos",
+    "Explorar instrumento",
+    "Resultados do rebaixamento",
     "Metodologia",
 ])
 
@@ -531,82 +622,44 @@ aba_visao, aba_op, aba_qc, aba_inst, aba_metodo = st.tabs([
 # -----------------------------------------------------------------------------
 with aba_visao:
     section(
-        "Resultado da operação",
-        "Onde o sistema está rebaixando e onde a recuperação já aparece",
-        "A tendência histórica transforma as séries de nível d’água em uma leitura espacial da resposta do sistema de rebaixamento. O QA/QC entra como garantia de confiabilidade para essa interpretação.",
+        "Visão executiva",
+        "Da confiabilidade do dado ao resultado da operação",
+        "O HidroCheck começa pela saúde da rede, permite investigar cada instrumento e, só então, consolida o comportamento do sistema de rebaixamento.",
     )
 
-    if not tx.empty:
-        c_map, c_side = st.columns([1.65, 1], gap="large")
-        with c_map:
-            st.markdown("#### Taxa de variação do nível d'água")
-            if mapa_path.exists():
-                st.image(str(mapa_path), width="stretch")
-            elif not tx_sig.empty:
-                fig_tx0 = px.scatter(
-                    tx_sig, x="x", y="y", color="taxa", hover_name="inst_id",
-                    hover_data={"localidade": True, "taxa": ":.2f", "p": ":.3g", "anos": ":.1f"},
-                    color_continuous_scale="RdBu", color_continuous_midpoint=0,
-                    labels={"x": "UTM E (m)", "y": "UTM N (m)", "taxa": "m/ano"},
-                )
-                fig_tx0.update_traces(marker=dict(size=10, line=dict(width=.7, color="white")))
-                fig_tx0.update_yaxes(scaleanchor="x", scaleratio=1)
-                plot_clean(fig_tx0, 580)
-                st.plotly_chart(fig_tx0, width="stretch")
-
-        with c_side:
-            st.markdown("#### Leitura executiva")
-            if not tx_sig.empty:
-                med = tx_sig.groupby("localidade")["taxa"].median()
-                for nome in ["Alegria Norte", "Alegria Sul", "Alegria Centro", "Cava Germano"]:
-                    if nome in med.index:
-                        st.markdown(sector_card(nome, float(med.loc[nome])), unsafe_allow_html=True)
-                st.caption("Valores negativos representam rebaixamento; positivos, recuperação.")
-
-            st.markdown("#### Escala do diagnóstico")
-            st.metric("Séries analisadas", len(tx))
-            st.metric("Tendências significativas", int(tx["significativo"].sum()))
-            st.metric("Poços de bombeamento identificados", int(tx["bombeamento"].sum()))
+    st.markdown(
+        """
+        <div class="flow">
+            <div class="flow-step"><div class="num">1</div><b>Rede completa</b><span>Todos os instrumentos ativos de nível d’água entram na triagem.</span></div>
+            <div class="flow-step"><div class="num">2</div><b>QA/QC</b><span>Recebimento, flatline, repetições, outliers e inconsistências.</span></div>
+            <div class="flow-step"><div class="num">3</div><b>Exploração</b><span>Cada instrumento pode ser aberto e revisado em detalhe.</span></div>
+            <div class="flow-step"><div class="num">4</div><b>Tendência</b><span>Theil–Sen + Mann–Kendall quantificam a evolução do nível d’água.</span></div>
+            <div class="flow-step"><div class="num">5</div><b>Resultado</b><span>O comportamento espacial apoia a leitura da operação do rebaixamento.</span></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.divider()
     section(
-        "Confiabilidade",
-        "Antes de interpretar, o HidroCheck verifica a saúde da rede completa",
-        "O módulo de QA/QC não substitui a análise hidrogeológica: ele destaca os instrumentos que merecem revisão e protege a interpretação dos resultados do rebaixamento.",
+        "1 · Confiabilidade",
+        "O que merece atenção agora",
+        "A triagem automática reduz o universo de revisão e direciona a equipe para os sinais mais relevantes.",
     )
 
-    kpi_cards([
-        ("Rede ativa", f"{len(fisicos)}", "instrumentos físicos avaliados", "info"),
-        ("Recebendo dados", f"{len(recebendo)}", "cadência compatível com o histórico", "ok"),
-        ("Para revisão", f"{len(atencao) + len(observar) + len(prioritarios)}", "sinais identificados pelo QA/QC", "warn"),
-        ("Prioridade alta", f"{len(prioritarios)}", "revisão recomendada primeiro", "danger"),
-    ])
-
-    left, right = st.columns([1.4, 1], gap="large")
+    left, right = st.columns([1.45, 1], gap="large")
     with left:
         st.markdown("#### Saúde espacial da rede")
-        mapa_qc = fisicos.dropna(subset=["x", "y"]).copy()
-        ordem = ["PRIORITÁRIO", "ATENÇÃO", "OBSERVAR", "OK"]
-        cores = {"PRIORITÁRIO": "#B42318", "ATENÇÃO": "#D89A20", "OBSERVAR": "#718096", "OK": "#2E7D32"}
-        fig = px.scatter(
-            mapa_qc,
-            x="x", y="y", color="status_qaqc", hover_name="instrumento",
-            hover_data={"localidade": True, "natureza": True, "recebimento": True, "motivos": True, "x": ":.0f", "y": ":.0f"},
-            color_discrete_map=cores,
-            category_orders={"status_qaqc": ordem},
-            labels={"x": "UTM E (m)", "y": "UTM N (m)", "status_qaqc": "QA/QC"},
-        )
-        fig.update_traces(marker=dict(size=10, line=dict(width=.8, color="white")))
-        fig.update_yaxes(scaleanchor="x", scaleratio=1)
-        plot_clean(fig, 480)
+        st.caption(f"{len(fisicos)} instrumentos físicos avaliados. Filtre por localidade e, se desejar, ative a imagem aérea de Germano.")
+        fig = mapa_saude_interativo(fisicos, "visao", 520)
         st.plotly_chart(fig, width="stretch")
 
     with right:
-        st.markdown("#### O que merece atenção agora")
+        st.markdown("#### Prioridades de revisão")
         if prioritarios.empty:
             st.success("Nenhum instrumento em prioridade alta.")
         else:
-            for i, (_, row) in enumerate(prioritarios.head(6).iterrows(), 1):
+            for i, (_, row) in enumerate(prioritarios.head(5).iterrows(), 1):
                 dt = row["ultima"].strftime("%d/%m/%Y") if pd.notna(row["ultima"]) else "—"
                 motivo = str(row["motivos"]).replace(" | ", ". ")
                 st.markdown(
@@ -618,20 +671,28 @@ with aba_visao:
                     f'</div>',
                     unsafe_allow_html=True,
                 )
+        st.caption("Abra a aba **Explorar instrumento** para revisar a série histórica e os motivos do QA/QC.")
 
-    section("Processo", "Como os dados viram diagnóstico da operação")
-    st.markdown(
-        """
-        <div class="flow">
-            <div class="flow-step"><div class="num">1</div><b>Rede completa</b><span>Cadastro e leituras atuais dos instrumentos de nível d’água.</span></div>
-            <div class="flow-step"><div class="num">2</div><b>QA/QC</b><span>Recebimento, flatline, repetição, outliers e inconsistências.</span></div>
-            <div class="flow-step"><div class="num">3</div><b>Tendência</b><span>Theil–Sen quantifica a taxa de variação de cada série.</span></div>
-            <div class="flow-step"><div class="num">4</div><b>Significância</b><span>Mann–Kendall separa tendência persistente de oscilação sem tendência.</span></div>
-            <div class="flow-step"><div class="num">5</div><b>Resultado</b><span>Mapa espacial mostra rebaixamento, recuperação e pontos para revisão.</span></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    st.divider()
+    section(
+        "2 · Operação",
+        "Resumo do comportamento do rebaixamento",
+        "Depois da triagem de qualidade, a análise de tendência resume onde predomina rebaixamento ou recuperação.",
     )
+
+    if not tx.empty and not tx_sig.empty:
+        n_sig_monitor = int(((tx["significativo"]) & (~tx["bombeamento"])).sum())
+        med_norte = tx_sig.loc[tx_sig["localidade"] == "Alegria Norte", "taxa"].median()
+        med_sul = tx_sig.loc[tx_sig["localidade"] == "Alegria Sul", "taxa"].median()
+        kpi_cards([
+            ("Séries de tendência", f"{len(tx)}", "módulo histórico do rebaixamento", "info"),
+            ("Tendências significativas", f"{n_sig_monitor}", "monitoramento · p < 0,05", "ok"),
+            ("Alegria Norte", f"{med_norte:.2f} m/ano" if pd.notna(med_norte) else "—", "mediana · rebaixamento predominante", "danger"),
+            ("Alegria Sul", f"+{med_sul:.2f} m/ano" if pd.notna(med_sul) and med_sul >= 0 else (f"{med_sul:.2f} m/ano" if pd.notna(med_sul) else "—"), "mediana · recuperação predominante", "ok"),
+        ])
+        st.info("O mapa completo, rankings e leitura por setor estão na aba **Resultados do rebaixamento**.")
+    else:
+        st.info("Os resultados históricos de tendência ainda não estão disponíveis nesta execução.")
 
 # -----------------------------------------------------------------------------
 # Saúde da rede
@@ -682,17 +743,8 @@ with aba_qc:
         st.plotly_chart(fig_rec, width="stretch")
 
     st.markdown("#### Mapa de saúde da instrumentação")
-    mapa_qc = fisicos.dropna(subset=["x", "y"]).copy()
-    fig_map = px.scatter(
-        mapa_qc,
-        x="x", y="y", color="status_qaqc", symbol="natureza", hover_name="instrumento",
-        hover_data={"localidade": True, "recebimento": True, "fonte_recente": True, "dias_sem_leitura": True, "motivos": True, "x": ":.0f", "y": ":.0f"},
-        color_discrete_map={"PRIORITÁRIO": "#B42318", "ATENÇÃO": "#D89A20", "OBSERVAR": "#718096", "OK": "#2E7D32"},
-        labels={"x": "UTM E (m)", "y": "UTM N (m)", "status_qaqc": "QA/QC", "natureza": "Tipo"},
-    )
-    fig_map.update_traces(marker=dict(size=10, line=dict(width=.8, color="white")))
-    fig_map.update_yaxes(scaleanchor="x", scaleratio=1)
-    plot_clean(fig_map, 610)
+    st.caption(f"{len(fisicos)} instrumentos físicos com coordenadas estão no mapa. Em 'Todas', pontos muito próximos podem se sobrepor visualmente; filtre por localidade para inspecionar cada instrumento.")
+    fig_map = mapa_saude_interativo(fisicos, "qaqc", 640)
     st.plotly_chart(fig_map, width="stretch")
 
     st.markdown("#### Lista de revisão")
@@ -713,8 +765,8 @@ def _hga_ui():
 
 with aba_inst:
     section(
-        "Consulta",
-        "Abra um instrumento e veja por que ele foi sinalizado",
+        "Exploração",
+        "Abra um instrumento e entenda seu comportamento",
         "A série histórica fica ao lado do resultado do QA/QC, facilitando a revisão pela equipe técnica.",
     )
 
@@ -741,6 +793,23 @@ with aba_inst:
         m2.metric("Dias sem leitura", "—" if pd.isna(row.get("dias_sem_leitura")) else int(row.get("dias_sem_leitura")))
         m3.metric("Repetição final", f'{int(row.get("repeticao_final_n", 0))} leituras')
         m4.metric("Outliers fortes", int(row.get("outliers_fortes", 0)))
+
+        # Integra QA/QC e resultado histórico do rebaixamento no detalhe do instrumento.
+        if not tx.empty:
+            import re as _re_tx
+            sid_tx = _re_tx.sub(r"\s+", "", str(sel)).upper()
+            tx_row = tx[tx["inst_id"].astype(str).str.replace(r"\s+", "", regex=True).str.upper() == sid_tx]
+            if not tx_row.empty:
+                tr = tx_row.iloc[0]
+                st.markdown("#### Tendência histórica do instrumento")
+                t1, t2, t3, t4 = st.columns(4)
+                taxa_val = tr.get("taxa")
+                t1.metric("Taxa", "—" if pd.isna(taxa_val) else f"{float(taxa_val):+.2f} m/ano")
+                t2.metric("Significativa", "Sim" if b(tr.get("significativo")) else "Não")
+                p_val = tr.get("p")
+                t3.metric("p-valor", "—" if pd.isna(p_val) else f"{float(p_val):.3g}")
+                anos_val = tr.get("anos")
+                t4.metric("Janela", "—" if pd.isna(anos_val) else f"{float(anos_val):.1f} anos")
 
         h = _hga_ui()
         import re as _re
@@ -775,7 +844,7 @@ with aba_inst:
 with aba_op:
     section(
         "Operação",
-        "Resultados do sistema de rebaixamento",
+        "Resultados da operação do sistema de rebaixamento",
         "Depois da triagem de qualidade, a análise de tendência mostra onde a rede registra rebaixamento, recuperação ou ausência de tendência significativa.",
     )
 
