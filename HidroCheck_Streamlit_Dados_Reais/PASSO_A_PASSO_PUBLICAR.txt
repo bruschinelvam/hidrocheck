@@ -1,0 +1,30 @@
+HIDROCHECK — PASSO A PASSO PARA PUBLICAR
+
+1) TESTE LOCAL
+Abra o PowerShell nesta pasta e rode:
+
+py -m pip install -r requirements.txt
+py -m streamlit run streamlit_app.py
+
+2) GITHUB
+- Crie um repositório (ex.: hidrocheck).
+- Faça upload do CONTEÚDO desta pasta, não apenas do ZIP.
+- Confirme que streamlit_app.py e requirements.txt aparecem na raiz.
+- As pastas data, src, out, assets e .streamlit também precisam estar no repositório.
+
+3) STREAMLIT COMMUNITY CLOUD
+- Conecte sua conta GitHub.
+- Create app.
+- Repository: o repositório criado.
+- Branch: main.
+- Main file path: streamlit_app.py.
+- Python: 3.12.
+- Deploy.
+
+4) TESTE
+- Abra o link gerado.
+- Teste Visão geral, Saúde da rede, Instrumentos, Resultado do rebaixamento e Metodologia.
+- Clique em Atualizar QA/QC para confirmar o reprocessamento.
+
+IMPORTANTE
+Esta versão contém os dados reais fornecidos para o projeto. Um app público pode ser acessado fora da empresa. Publique publicamente apenas se isso estiver autorizado.
