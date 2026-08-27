@@ -85,6 +85,16 @@ st.markdown(
     section[data-testid="stSidebar"] hr {
         border-color: rgba(255,255,255,.16);
     }
+    section[data-testid="stSidebar"] div[role="radiogroup"] label {
+        background: rgba(255,255,255,.055);
+        border: 1px solid rgba(255,255,255,.08);
+        border-radius: 10px;
+        padding: 8px 10px;
+        margin-bottom: 6px;
+    }
+    section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {
+        background: rgba(255,255,255,.10);
+    }
 
     /* Botões */
     .stButton > button[kind="primary"] {
@@ -609,18 +619,32 @@ kpi_cards([
     ("Prioridade alta", f"{len(prioritarios)}", "revisão recomendada primeiro", "danger"),
 ])
 
-aba_visao, aba_qc, aba_inst, aba_op, aba_metodo = st.tabs([
-    "Visão geral",
-    "Saúde da rede",
-    "Explorar instrumento",
-    "Resultados do rebaixamento",
-    "Metodologia",
-])
+with st.sidebar:
+    st.divider()
+    st.caption("Navegação")
+    pagina = st.radio(
+        "Seções",
+        [
+            "Visão geral",
+            "Saúde da rede",
+            "Explorar instrumento",
+            "Resultados do rebaixamento",
+            "Metodologia",
+        ],
+        index=0,
+        label_visibility="collapsed",
+    )
+
+aba_visao = pagina == "Visão geral"
+aba_qc = pagina == "Saúde da rede"
+aba_inst = pagina == "Explorar instrumento"
+aba_op = pagina == "Resultados do rebaixamento"
+aba_metodo = pagina == "Metodologia"
 
 # -----------------------------------------------------------------------------
 # Visão geral
 # -----------------------------------------------------------------------------
-with aba_visao:
+if aba_visao:
     section(
         "Visão executiva",
         "Da confiabilidade do dado ao resultado da operação",
@@ -697,7 +721,7 @@ with aba_visao:
 # -----------------------------------------------------------------------------
 # Saúde da rede
 # -----------------------------------------------------------------------------
-with aba_qc:
+if aba_qc:
     section(
         "QA/QC",
         "Saúde da rede de monitoramento de nível d'água",
@@ -763,7 +787,7 @@ def _hga_ui():
     _, h = carregar_bases(ROOT / "data")
     return h
 
-with aba_inst:
+if aba_inst:
     section(
         "Exploração",
         "Abra um instrumento e entenda seu comportamento",
@@ -841,7 +865,7 @@ with aba_inst:
 # -----------------------------------------------------------------------------
 # Resultado do rebaixamento
 # -----------------------------------------------------------------------------
-with aba_op:
+if aba_op:
     section(
         "Operação",
         "Resultados da operação do sistema de rebaixamento",
@@ -901,7 +925,7 @@ with aba_op:
 # -----------------------------------------------------------------------------
 # Metodologia
 # -----------------------------------------------------------------------------
-with aba_metodo:
+if aba_metodo:
     section(
         "Rastreabilidade",
         "Critérios explícitos, parametrizados e revisáveis",
