@@ -1,0 +1,9 @@
+Fonte: ImagemGoogle_v00.tif fornecida pela usuária
+CRS: EPSG:31983 (SIRGAS 2000 / UTM zone 23S)
+Extensão geográfica (m):
+  xmin = 648700.4479
+  ymin = 7760701.2652
+  xmax = 667298.2571
+  ymax = 7773899.3678
+Imagem web gerada por reamostragem do GeoTIFF original para 2400 x 1703 px.
+O GeoTIFF original (~1,28 GB) não é necessário para execução do app publicado.
