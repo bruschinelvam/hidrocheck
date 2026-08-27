@@ -157,10 +157,12 @@ def carregar_bases(dir_dados: str | Path) -> tuple[pd.DataFrame, pd.DataFrame]:
 def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     cad, hga = carregar_bases(dir_dados)
 
-    # Escopo = instrumentos do Complexo Germano, ativos e com propósito de monitoramento hidrogeológico.
-    # Cava é um ativo/feição, não um instrumento de NA, então não entra no denominador.
-    escopo = cad[(cad['Situacao Atual'] == 'Ativo') &
-                 (cad['Proposito'] == 'Monitoramento Hidrogeologico') &
+    # Escopo cadastral = todos os instrumentos de monitoramento hidrogeológico do
+    # Complexo Germano. O status cadastral é tratado ANTES do QA/QC: apenas os
+    # instrumentos Ativos entram na avaliação operacional atual. Instrumentos
+    # Tamponados, Descomissionados, Inativos ou Destruídos permanecem disponíveis
+    # para consulta histórica, mas não geram falso alerta por ausência de dados.
+    escopo = cad[(cad['Proposito'] == 'Monitoramento Hidrogeologico') &
                  (cad['Natureza do Ponto'] != 'Cava')].copy()
 
     rows = []
@@ -170,12 +172,19 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
         inst = c['inst_id']
         tag = str(c.get('TAG HGA', ''))
         natureza = str(c.get('Natureza do Ponto', ''))
+        situacao_cadastro = str(c.get('Situacao Atual', '') or '').strip()
+        ativo = situacao_cadastro.casefold() == 'ativo'
         virtual = 'PVIRTUAL' in inst
         g_all = hga[hga['inst_id'] == inst].copy()
         futuras = g_all[g_all['data'] > DATA_REF].copy()
         g = g_all[(g_all['data'].notna()) & (g_all['data'] <= DATA_REF) &
                   (g_all['na_m'].notna() | g_all['cota_na_m'].notna())].copy()
         g = g.sort_values('data')
+        situacao_hga_ultima = ''
+        if len(g) and 'Situacao Atual' in g.columns:
+            vals_status = g['Situacao Atual'].dropna().astype(str)
+            if len(vals_status):
+                situacao_hga_ultima = vals_status.iloc[-1].strip()
 
         fonte = _maior_fonte_recente(g)
         if fonte == 'Automático':
@@ -198,6 +207,8 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
 
         if virtual:
             recebimento = 'VIRTUAL'
+        elif not ativo:
+            recebimento = 'FORA DE OPERAÇÃO'
         elif pd.isna(ultima):
             recebimento = 'SEM DADOS'
         else:
@@ -223,12 +234,12 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
         # é reportado como integração/semântica do canal, e não como "sensor travado".
         zero_auto = False
         travado = False
-        if natureza == 'Poco Tubular':
+        if ativo and natureza == 'Poco Tubular':
             ga = g[(g['tipo_dado'] == 'Medido Automatico') & g['na_m'].notna() &
                    (g['data'] >= DATA_REF - pd.Timedelta(days=JANELA_QAQC_AUTO_DIAS))].copy()
             z_n, z_dias, z_val = _terminal_run(ga, 'na_m')
             zero_auto = bool(z_val is not None and abs(z_val) < 1e-9 and z_n >= 7 and z_dias >= 7)
-        elif not virtual and not rep_fundo:
+        elif ativo and not virtual and not rep_fundo:
             if fonte == 'Automático':
                 travado = rep_n >= 10 and rep_dias >= 10
             elif fonte == 'Manual':
@@ -236,7 +247,7 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
 
         # Outliers também são um alerta RECENTE. Eventos antigos permanecem visíveis
         # na série histórica, mas não geram alerta operacional atual.
-        if natureza == 'Poco Tubular':
+        if (not ativo) or natureza == 'Poco Tubular':
             out = g.iloc[0:0].copy()
         else:
             recent_outlier = primary[primary['data'] >= DATA_REF - pd.Timedelta(days=JANELA_QAQC_OUTLIER_DIAS)].copy()
@@ -255,12 +266,14 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
         score = 0
         if virtual:
             motivos.append('Ponto virtual do modelo — fora do QA/QC de instrumentação')
+        elif not ativo:
+            motivos.append(f'Situação cadastral: {situacao_cadastro or "não informada"} — fora do QA/QC operacional atual')
         else:
             if recebimento == 'SEM DADOS':
                 motivos.append('Ativo no cadastro, sem leituras encontradas na HGA')
                 score += 4
             elif recebimento == 'INTERROMPIDO':
-                motivos.append(f'Recebimento interrompido ({dias_sem} dias sem leitura)')
+                motivos.append(f'Recebimento interrompido ({dias_sem} dias sem leitura); confirmar se o instrumento permanece ativo em campo antes de tratar como falha de transmissão')
                 score += 5
             elif recebimento == 'ATRASADO':
                 motivos.append(f'Recebimento atrasado ({dias_sem} dias sem leitura)')
@@ -291,11 +304,13 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
         # Prioridade alta é reservada a sinal atual e diretamente acionável:
         # flatline em instrumento de monitoramento ou interrupção recente de canal automático.
         interrupcao_auto_recente = bool(
-            recebimento == 'INTERROMPIDO' and fonte == 'Automático'
+            ativo and recebimento == 'INTERROMPIDO' and fonte == 'Automático'
             and pd.notna(dias_sem) and dias_sem <= 365
         )
         if virtual:
             status = 'NÃO AVALIADO'
+        elif not ativo:
+            status = 'FORA DE OPERAÇÃO'
         elif travado or interrupcao_auto_recente:
             status = 'PRIORITÁRIO'
         elif score >= 3:
@@ -309,6 +324,9 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
             'instrumento': tag,
             'nome_original': c.get('Nome Original', ''),
             'natureza': natureza,
+            'situacao_cadastro': situacao_cadastro,
+            'situacao_hga_ultima': situacao_hga_ultima,
+            'data_atualizacao_cadastro': c.get('Data Atualizacao', pd.NaT),
             'localidade': c.get('Localidade', ''),
             'x': pd.to_numeric(c.get('X(m)'), errors='coerce'),
             'y': pd.to_numeric(c.get('Y(m)'), errors='coerce'),
