@@ -561,7 +561,7 @@ with note_col:
     st.caption("Reprocessa **HGA-GERAL-06082026.xlsx** + **Coordenadas.xlsx** considerando somente o **Complexo Germano**. Os alertas são uma triagem automática para revisão técnica; não significam defeito confirmado.")
 
 if processar:
-    with st.spinner("Analisando os instrumentos ativos do Complexo Germano..."):
+    with st.spinner("Atualizando situação cadastral e QA/QC dos instrumentos do Complexo Germano..."):
         try:
             rodar_qaqc(ROOT / "data", OUT)
             st.cache_data.clear()
@@ -597,7 +597,9 @@ if not eventos.empty:
     eventos = eventos[eventos["instrumento"].astype(str).isin(rede["instrumento"].astype(str))].copy()
     eventos["data"] = pd.to_datetime(eventos["data"], errors="coerce")
 
-fisicos = rede[rede["status_qaqc"] != "NÃO AVALIADO"].copy()
+ativos = rede[(rede.get("situacao_cadastro", "Ativo").astype(str).str.casefold() == "ativo") & (rede["status_qaqc"] != "NÃO AVALIADO")].copy()
+fora_operacao = rede[rede["status_qaqc"] == "FORA DE OPERAÇÃO"].copy()
+fisicos = ativos.copy()
 prioritarios = fisicos[fisicos["status_qaqc"] == "PRIORITÁRIO"].copy()
 atencao = fisicos[fisicos["status_qaqc"] == "ATENÇÃO"].copy()
 observar = fisicos[fisicos["status_qaqc"] == "OBSERVAR"].copy()
@@ -616,7 +618,7 @@ else:
 # KPIs executivos: primeiro a confiabilidade da rede; depois, na aba própria, os resultados do rebaixamento.
 n_revisao = len(atencao) + len(observar) + len(prioritarios)
 kpi_cards([
-    ("Instrumentos avaliados", f"{len(fisicos)}", "Complexo Germano · rede física ativa", "info"),
+    ("Instrumentos ativos", f"{len(fisicos)}", "entram no QA/QC operacional", "info"),
     ("Recebendo dados", f"{len(recebendo)}", "cadência compatível com o histórico", "ok"),
     ("Para revisão", f"{n_revisao}", "atenção, observar ou prioridade", "warn"),
     ("Prioridade alta", f"{len(prioritarios)}", "revisão recomendada primeiro", "danger"),
@@ -657,7 +659,7 @@ if aba_visao:
     st.markdown(
         """
         <div class="flow">
-            <div class="flow-step"><div class="num">1</div><b>Rede completa</b><span>Os instrumentos ativos de nível d’água do Complexo Germano entram na triagem.</span></div>
+            <div class="flow-step"><div class="num">1</div><b>Rede completa</b><span>O status cadastral é verificado primeiro; somente instrumentos ativos entram no QA/QC operacional.</span></div>
             <div class="flow-step"><div class="num">2</div><b>QA/QC</b><span>Recebimento e sinais nas leituras recentes: flatline, repetições, outliers e inconsistências.</span></div>
             <div class="flow-step"><div class="num">3</div><b>Exploração</b><span>Cada instrumento pode ser aberto e revisado em detalhe.</span></div>
             <div class="flow-step"><div class="num">4</div><b>Tendência</b><span>Theil–Sen + Mann–Kendall quantificam a evolução do nível d’água.</span></div>
@@ -677,7 +679,7 @@ if aba_visao:
     left, right = st.columns([1.45, 1], gap="large")
     with left:
         st.markdown("#### Saúde espacial da rede")
-        st.caption(f"{len(fisicos)} instrumentos físicos avaliados no Complexo Germano. Filtre por localidade e, se desejar, ative a imagem aérea de Germano.")
+        st.caption(f"{len(fisicos)} instrumentos ativos avaliados no Complexo Germano. Instrumentos tamponados, descomissionados ou destruídos ficam fora dos alertas operacionais.")
         fig = mapa_saude_interativo(fisicos, "visao", 520)
         st.plotly_chart(fig, width="stretch")
 
@@ -737,6 +739,16 @@ if aba_qc:
         "A série histórica deve ser interpretada junto à distância dos PTRs, ao regime de bombeamento e à pluviometria quando disponível."
     )
 
+    st.markdown("#### Situação cadastral da instrumentação")
+    situ = rede.get("situacao_cadastro", pd.Series(dtype=str)).fillna("Não informado").astype(str)
+    kpi_cards([
+        ("Ativos", str(int((situ.str.casefold() == "ativo").sum())), "avaliados no QA/QC atual", "ok"),
+        ("Tamponados", str(int((situ.str.casefold() == "tamponado").sum())), "não geram alerta por falta de dados", "info"),
+        ("Descomissionados", str(int((situ.str.casefold() == "descomissionado").sum())), "mantidos apenas para histórico", "info"),
+        ("Destruídos / outros", str(int((~situ.str.casefold().isin(["ativo", "tamponado", "descomissionado"])).sum())), "fora do QA/QC operacional", "info"),
+    ])
+    st.caption("O status cadastral é a primeira regra do QA/QC. Um instrumento fora de operação não deve aparecer como falha de transmissão apenas porque deixou de receber leituras.")
+
     n_trav = int(fisicos["motivos"].str.contains("travado", case=False, na=False).sum())
     n_out = int((fisicos["outliers_fortes"] > 0).sum())
     n_zero = int(fisicos["zero_auto_persistente"].sum())
@@ -776,15 +788,15 @@ if aba_qc:
         st.plotly_chart(fig_rec, width="stretch")
 
     st.markdown("#### Mapa de saúde da instrumentação")
-    st.caption(f"{len(fisicos)} instrumentos físicos do Complexo Germano. Passe o mouse sobre um ponto para ver o instrumento e o diagnóstico; apenas os prioritários ficam identificados no mapa.")
+    st.caption(f"{len(fisicos)} instrumentos **ativos** do Complexo Germano entram no mapa de saúde. Pontos fora de operação permanecem disponíveis na aba Explorar instrumento, mas não geram alerta de QA/QC.")
     fig_map = mapa_saude_interativo(fisicos, "qaqc", 640)
     st.plotly_chart(fig_map, width="stretch")
 
     st.markdown("#### Lista de revisão")
     show = fisicos[fisicos["status_qaqc"].isin(["PRIORITÁRIO", "ATENÇÃO", "OBSERVAR"])].copy()
-    cols = ["instrumento", "localidade", "natureza", "status_qaqc", "recebimento", "ultima", "motivos"]
+    cols = ["instrumento", "localidade", "natureza", "situacao_cadastro", "status_qaqc", "recebimento", "ultima", "motivos"]
     tab = show[cols].copy()
-    tab.columns = ["Instrumento", "Localidade", "Tipo", "QA/QC", "Recebimento", "Última leitura", "Sinais identificados"]
+    tab.columns = ["Instrumento", "Localidade", "Tipo", "Situação cadastral", "QA/QC", "Recebimento", "Última leitura", "Sinais identificados"]
     tab["Última leitura"] = pd.to_datetime(tab["Última leitura"], errors="coerce").dt.strftime("%d/%m/%Y")
     st.dataframe(tab, width="stretch", hide_index=True, height=500)
 
@@ -814,12 +826,19 @@ if aba_inst:
     else:
         sel = st.selectbox("Instrumento", filtradas, index=0)
         row = rede[rede["instrumento"] == sel].iloc[0]
+        status_cad = str(row.get("situacao_cadastro", "—") or "—")
+        status_hga = str(row.get("situacao_hga_ultima", "") or "").strip()
+        status_hga_txt = f' · <strong>Última HGA:</strong> {status_hga}' if status_hga else ''
         st.markdown(
             f'<div class="callout"><strong>{sel}</strong> · {row.get("localidade", "—")} · {row.get("natureza", "—")}<br>'
+            f'<strong>Situação cadastral:</strong> {status_cad}{status_hga_txt}<br>'
             f'<strong>QA/QC:</strong> {row.get("status_qaqc", "—")} · <strong>Recebimento:</strong> {row.get("recebimento", "—")}<br>'
             f'{row.get("motivos", "")}</div>',
             unsafe_allow_html=True,
         )
+
+        if status_cad.casefold() == "ativo" and str(row.get("recebimento", "")) == "INTERROMPIDO":
+            st.warning("O cadastro ainda indica **Ativo**, mas o recebimento está interrompido. Antes de tratar como falha de transmissão, confirme em campo/cadastro se o instrumento foi desativado, tamponado ou retirado de operação.")
 
         ptr = str(row.get("ptr_mais_proximo", "") or "").strip()
         dist_ptr = pd.to_numeric(row.get("dist_ptr_m"), errors="coerce")
