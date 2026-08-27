@@ -499,18 +499,30 @@ else:
     tx = pd.DataFrame()
     tx_sig = pd.DataFrame()
 
-kpi_cards([
-    ("Instrumentos no escopo", f"{len(rede)}", "ativos de monitoramento hidrogeológico", "info"),
-    ("Físicos avaliados", f"{len(fisicos)}", "1 ponto virtual separado", "ok"),
-    ("Recebendo dados", f"{len(recebendo)}", "cadência compatível com o histórico", "ok"),
-    ("Prioridade alta", f"{len(prioritarios)}", "sinais atuais e acionáveis", "danger"),
-])
+# KPIs principais: o projeto é sobre os resultados da operação do rebaixamento.
+if not tx.empty:
+    n_sig_monitor = int(((tx["significativo"]) & (~tx["bombeamento"])).sum())
+    med_norte = tx_sig.loc[tx_sig["localidade"] == "Alegria Norte", "taxa"].median() if not tx_sig.empty else float("nan")
+    med_sul = tx_sig.loc[tx_sig["localidade"] == "Alegria Sul", "taxa"].median() if not tx_sig.empty else float("nan")
+    kpi_cards([
+        ("Séries de tendência", f"{len(tx)}", "instrumentos do diagnóstico do rebaixamento", "info"),
+        ("Tendências significativas", f"{n_sig_monitor}", "monitoramento · Mann–Kendall p < 0,05", "ok"),
+        ("Alegria Norte", f"{med_norte:.2f} m/ano" if pd.notna(med_norte) else "—", "mediana · rebaixamento predominante", "danger"),
+        ("Alegria Sul", f"+{med_sul:.2f} m/ano" if pd.notna(med_sul) and med_sul >= 0 else (f"{med_sul:.2f} m/ano" if pd.notna(med_sul) else "—"), "mediana · recuperação predominante", "ok"),
+    ])
+else:
+    kpi_cards([
+        ("Instrumentos no escopo", f"{len(rede)}", "ativos de monitoramento hidrogeológico", "info"),
+        ("Físicos avaliados", f"{len(fisicos)}", "instrumentos físicos", "ok"),
+        ("Recebendo dados", f"{len(recebendo)}", "cadência compatível com o histórico", "ok"),
+        ("Prioridade alta", f"{len(prioritarios)}", "sinais atuais e acionáveis", "danger"),
+    ])
 
-aba_visao, aba_qc, aba_inst, aba_op, aba_metodo = st.tabs([
+aba_visao, aba_op, aba_qc, aba_inst, aba_metodo = st.tabs([
     "Visão geral",
+    "Resultado do rebaixamento",
     "Saúde da rede",
     "Instrumentos",
-    "Resultado do rebaixamento",
     "Metodologia",
 ])
 
@@ -519,12 +531,58 @@ aba_visao, aba_qc, aba_inst, aba_op, aba_metodo = st.tabs([
 # -----------------------------------------------------------------------------
 with aba_visao:
     section(
-        "Visão executiva",
-        "Primeiro a confiabilidade do dado. Depois, a interpretação do rebaixamento.",
-        "A rotina percorre toda a rede ativa, identifica sinais de qualidade e direciona a revisão antes do uso dos dados na análise hidrogeológica.",
+        "Resultado da operação",
+        "Onde o sistema está rebaixando e onde a recuperação já aparece",
+        "A tendência histórica transforma as séries de nível d’água em uma leitura espacial da resposta do sistema de rebaixamento. O QA/QC entra como garantia de confiabilidade para essa interpretação.",
     )
 
-    left, right = st.columns([1.55, 1], gap="large")
+    if not tx.empty:
+        c_map, c_side = st.columns([1.65, 1], gap="large")
+        with c_map:
+            st.markdown("#### Taxa de variação do nível d'água")
+            if mapa_path.exists():
+                st.image(str(mapa_path), width="stretch")
+            elif not tx_sig.empty:
+                fig_tx0 = px.scatter(
+                    tx_sig, x="x", y="y", color="taxa", hover_name="inst_id",
+                    hover_data={"localidade": True, "taxa": ":.2f", "p": ":.3g", "anos": ":.1f"},
+                    color_continuous_scale="RdBu", color_continuous_midpoint=0,
+                    labels={"x": "UTM E (m)", "y": "UTM N (m)", "taxa": "m/ano"},
+                )
+                fig_tx0.update_traces(marker=dict(size=10, line=dict(width=.7, color="white")))
+                fig_tx0.update_yaxes(scaleanchor="x", scaleratio=1)
+                plot_clean(fig_tx0, 580)
+                st.plotly_chart(fig_tx0, width="stretch")
+
+        with c_side:
+            st.markdown("#### Leitura executiva")
+            if not tx_sig.empty:
+                med = tx_sig.groupby("localidade")["taxa"].median()
+                for nome in ["Alegria Norte", "Alegria Sul", "Alegria Centro", "Cava Germano"]:
+                    if nome in med.index:
+                        st.markdown(sector_card(nome, float(med.loc[nome])), unsafe_allow_html=True)
+                st.caption("Valores negativos representam rebaixamento; positivos, recuperação.")
+
+            st.markdown("#### Escala do diagnóstico")
+            st.metric("Séries analisadas", len(tx))
+            st.metric("Tendências significativas", int(tx["significativo"].sum()))
+            st.metric("Poços de bombeamento identificados", int(tx["bombeamento"].sum()))
+
+    st.divider()
+    section(
+        "Confiabilidade",
+        "Antes de interpretar, o HidroCheck verifica a saúde da rede completa",
+        "O módulo de QA/QC não substitui a análise hidrogeológica: ele destaca os instrumentos que merecem revisão e protege a interpretação dos resultados do rebaixamento.",
+    )
+
+    kpi_cards([
+        ("Rede ativa", f"{len(fisicos)}", "instrumentos físicos avaliados", "info"),
+        ("Recebendo dados", f"{len(recebendo)}", "cadência compatível com o histórico", "ok"),
+        ("Para revisão", f"{len(atencao) + len(observar) + len(prioritarios)}", "sinais identificados pelo QA/QC", "warn"),
+        ("Prioridade alta", f"{len(prioritarios)}", "revisão recomendada primeiro", "danger"),
+    ])
+
+    left, right = st.columns([1.4, 1], gap="large")
     with left:
         st.markdown("#### Saúde espacial da rede")
         mapa_qc = fisicos.dropna(subset=["x", "y"]).copy()
@@ -540,7 +598,7 @@ with aba_visao:
         )
         fig.update_traces(marker=dict(size=10, line=dict(width=.8, color="white")))
         fig.update_yaxes(scaleanchor="x", scaleratio=1)
-        plot_clean(fig, 560)
+        plot_clean(fig, 480)
         st.plotly_chart(fig, width="stretch")
 
     with right:
@@ -561,24 +619,15 @@ with aba_visao:
                     unsafe_allow_html=True,
                 )
 
-        st.markdown("#### Recebimento da rede")
-        r1, r2 = st.columns(2)
-        with r1:
-            st.metric("Sem dados na HGA", int((fisicos["recebimento"] == "SEM DADOS").sum()))
-            st.metric("Atrasados", int((fisicos["recebimento"] == "ATRASADO").sum()))
-        with r2:
-            st.metric("Interrompidos", int((fisicos["recebimento"] == "INTERROMPIDO").sum()))
-            st.metric("Recebendo", int((fisicos["recebimento"] == "RECEBENDO").sum()))
-
-    section("Processo", "Como o HidroCheck transforma a base em informação útil")
+    section("Processo", "Como os dados viram diagnóstico da operação")
     st.markdown(
         """
         <div class="flow">
-            <div class="flow-step"><div class="num">1</div><b>Cadastro atual</b><span>Seleciona instrumentos ativos de monitoramento hidrogeológico.</span></div>
-            <div class="flow-step"><div class="num">2</div><b>Recebimento</b><span>Compara última leitura e cadência com o histórico de cada instrumento.</span></div>
-            <div class="flow-step"><div class="num">3</div><b>QA/QC</b><span>Procura flatline, repetições, outliers fortes e inconsistências.</span></div>
-            <div class="flow-step"><div class="num">4</div><b>Triagem</b><span>Classifica OK, observar, atenção e prioridade alta.</span></div>
-            <div class="flow-step"><div class="num">5</div><b>Interpretação</b><span>Dados revisados alimentam o diagnóstico do rebaixamento.</span></div>
+            <div class="flow-step"><div class="num">1</div><b>Rede completa</b><span>Cadastro e leituras atuais dos instrumentos de nível d’água.</span></div>
+            <div class="flow-step"><div class="num">2</div><b>QA/QC</b><span>Recebimento, flatline, repetição, outliers e inconsistências.</span></div>
+            <div class="flow-step"><div class="num">3</div><b>Tendência</b><span>Theil–Sen quantifica a taxa de variação de cada série.</span></div>
+            <div class="flow-step"><div class="num">4</div><b>Significância</b><span>Mann–Kendall separa tendência persistente de oscilação sem tendência.</span></div>
+            <div class="flow-step"><div class="num">5</div><b>Resultado</b><span>Mapa espacial mostra rebaixamento, recuperação e pontos para revisão.</span></div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -764,6 +813,21 @@ with aba_op:
                     if nome in med.index:
                         st.markdown(sector_card(nome, float(med.loc[nome])), unsafe_allow_html=True)
                 st.caption("Valores negativos = rebaixamento; positivos = recuperação.")
+
+        if not tx_sig.empty:
+            st.markdown("#### Instrumentos com maiores taxas significativas")
+            c_down, c_up = st.columns(2, gap="large")
+            cols_show = ["inst_id", "localidade", "taxa", "p", "anos"]
+            with c_down:
+                st.markdown("**Maior rebaixamento**")
+                d = tx_sig.nsmallest(8, "taxa")[cols_show].copy()
+                d.columns = ["Instrumento", "Setor", "Taxa (m/ano)", "p", "Anos"]
+                st.dataframe(d, width="stretch", hide_index=True)
+            with c_up:
+                st.markdown("**Maior recuperação**")
+                u = tx_sig.nlargest(8, "taxa")[cols_show].copy()
+                u.columns = ["Instrumento", "Setor", "Taxa (m/ano)", "p", "Anos"]
+                st.dataframe(u, width="stretch", hide_index=True)
 
 # -----------------------------------------------------------------------------
 # Metodologia
