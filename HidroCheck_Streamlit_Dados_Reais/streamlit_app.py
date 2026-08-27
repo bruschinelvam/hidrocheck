@@ -52,7 +52,7 @@ from qaqc_rede import salvar as rodar_qaqc, carregar_bases  # noqa: E402
 # Configuração da página
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Transformando dados em valor | Sistema de rebaixamento",
+    page_title="HidroCheck | Operação do Sistema de Rebaixamento",
     page_icon="💧",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -461,43 +461,16 @@ def plot_clean(fig: go.Figure, height: int | None = None) -> go.Figure:
     return fig
 
 
-def mapa_saude_interativo(df: pd.DataFrame, key_prefix: str, height: int = 520) -> go.Figure:
-    """Mapa QA/QC com filtro de localidade, rótulos e imagem aérea de Germano."""
+def mapa_saude_interativo(df: pd.DataFrame, key_prefix: str, height: int = 650) -> go.Figure:
+    """Mapa QA/QC do Complexo Germano, com imagem aérea fixa e detalhes no hover."""
     base = df.dropna(subset=["x", "y"]).copy()
-    localidades = sorted([str(x) for x in base["localidade"].dropna().unique()])
 
-    c_filtro, c_rotulo, c_base = st.columns([1.35, 1, 1.05])
-    with c_filtro:
-        local = st.selectbox(
-            "Localidade",
-            ["Todas"] + localidades,
-            key=f"{key_prefix}_localidade",
-        )
-    with c_rotulo:
-        modo_rotulo = st.selectbox(
-            "Nomes no mapa",
-            ["Somente alertas", "Todos", "Nenhum"],
-            key=f"{key_prefix}_rotulos",
-        )
-    with c_base:
-        mostrar_base = st.toggle(
-            "Imagem aérea de Germano",
-            value=False,
-            key=f"{key_prefix}_base_aerea",
-            disabled=False,
-        )
-
-    if local != "Todas":
-        base = base[base["localidade"].astype(str) == local].copy()
-
-    if modo_rotulo == "Todos":
-        base["rotulo"] = base["instrumento"].astype(str)
-    elif modo_rotulo == "Somente alertas":
-        base["rotulo"] = base.apply(
-            lambda r: str(r["instrumento"]) if r["status_qaqc"] != "OK" else "", axis=1
-        )
-    else:
-        base["rotulo"] = ""
+    # O mapa principal deve ser limpo: todos os instrumentos aparecem como pontos,
+    # mas apenas os prioritários recebem rótulo permanente. O nome e os demais
+    # detalhes continuam disponíveis ao passar o mouse.
+    base["rotulo"] = base.apply(
+        lambda r: str(r["instrumento"]) if r["status_qaqc"] == "PRIORITÁRIO" else "", axis=1
+    )
 
     ordem = ["PRIORITÁRIO", "ATENÇÃO", "OBSERVAR", "OK"]
     cores = {"PRIORITÁRIO": "#C6251E", "ATENÇÃO": "#E09A18", "OBSERVAR": "#5B6B7E", "OK": "#26843A"}
@@ -513,38 +486,38 @@ def mapa_saude_interativo(df: pd.DataFrame, key_prefix: str, height: int = 520) 
         labels={"x": "UTM E (m)", "y": "UTM N (m)", "status_qaqc": "QA/QC"},
     )
 
-    if mostrar_base:
-        imagem = carregar_base_aerea()
-        if imagem is not None:
-            b = BASE_AEREA_BOUNDS
-            fig.add_layout_image(
-                dict(
-                    source=imagem,
-                    xref="x", yref="y",
-                    x=b["xmin"], y=b["ymax"],
-                    sizex=b["xmax"] - b["xmin"],
-                    sizey=b["ymax"] - b["ymin"],
-                    sizing="stretch",
-                    opacity=0.82,
-                    layer="below",
-                    xanchor="left", yanchor="top",
-                )
+    # A imagem aérea de Germano é sempre exibida no mapa principal.
+    imagem = carregar_base_aerea()
+    if imagem is not None:
+        bnd = BASE_AEREA_BOUNDS
+        fig.add_layout_image(
+            dict(
+                source=imagem,
+                xref="x", yref="y",
+                x=bnd["xmin"], y=bnd["ymax"],
+                sizex=bnd["xmax"] - bnd["xmin"],
+                sizey=bnd["ymax"] - bnd["ymin"],
+                sizing="stretch",
+                opacity=0.90,
+                layer="below",
+                xanchor="left", yanchor="top",
             )
+        )
 
     fig.update_traces(
-        marker=dict(size=11, line=dict(width=1.35, color="#FFFFFF"), opacity=0.98),
+        marker=dict(size=11, line=dict(width=1.4, color="#FFFFFF"), opacity=0.98),
         textposition="top center",
-        textfont=dict(size=10, color="#101820", family="Segoe UI Semibold, Segoe UI, Arial"),
+        textfont=dict(size=10, color="#111827", family="Segoe UI Semibold, Segoe UI, Arial"),
         cliponaxis=False,
     )
     fig.update_yaxes(scaleanchor="x", scaleratio=1)
     plot_clean(fig, height)
-    if mostrar_base:
-        fig.update_xaxes(showgrid=False)
-        fig.update_yaxes(showgrid=False)
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(showgrid=False)
     fig.update_layout(
         hoverlabel=dict(bgcolor="white", font_color="#17212B", font_size=12),
         legend=dict(bgcolor="rgba(255,255,255,0.90)", bordercolor="#CBD5E1", borderwidth=1),
+        margin=dict(l=18, r=18, t=18, b=18),
     )
     return fig
 
@@ -797,7 +770,7 @@ if aba_qc:
         st.plotly_chart(fig_rec, width="stretch")
 
     st.markdown("#### Mapa de saúde da instrumentação")
-    st.caption(f"{len(fisicos)} instrumentos físicos do Complexo Germano estão no mapa. Em 'Todas', pontos muito próximos podem se sobrepor visualmente; filtre por localidade para inspecionar cada instrumento.")
+    st.caption(f"{len(fisicos)} instrumentos físicos do Complexo Germano. Passe o mouse sobre um ponto para ver o instrumento e o diagnóstico; apenas os prioritários ficam identificados no mapa.")
     fig_map = mapa_saude_interativo(fisicos, "qaqc", 640)
     st.plotly_chart(fig_map, width="stretch")
 
