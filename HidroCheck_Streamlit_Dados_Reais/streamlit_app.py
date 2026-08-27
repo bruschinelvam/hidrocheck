@@ -658,7 +658,7 @@ if aba_visao:
         """
         <div class="flow">
             <div class="flow-step"><div class="num">1</div><b>Rede completa</b><span>Os instrumentos ativos de nível d’água do Complexo Germano entram na triagem.</span></div>
-            <div class="flow-step"><div class="num">2</div><b>QA/QC</b><span>Recebimento, flatline, repetições, outliers e inconsistências.</span></div>
+            <div class="flow-step"><div class="num">2</div><b>QA/QC</b><span>Recebimento e sinais nas leituras recentes: flatline, repetições, outliers e inconsistências.</span></div>
             <div class="flow-step"><div class="num">3</div><b>Exploração</b><span>Cada instrumento pode ser aberto e revisado em detalhe.</span></div>
             <div class="flow-step"><div class="num">4</div><b>Tendência</b><span>Theil–Sen + Mann–Kendall quantificam a evolução do nível d’água.</span></div>
             <div class="flow-step"><div class="num">5</div><b>Resultado</b><span>O comportamento espacial apoia a leitura da operação do rebaixamento.</span></div>
@@ -727,8 +727,14 @@ if aba_visao:
 if aba_qc:
     section(
         "QA/QC",
-        "Saúde da rede de monitoramento de nível d'água",
-        "Os instrumentos ativos do Complexo Germano são avaliados com regras transparentes e reprodutíveis.",
+        "Saúde atual da rede de monitoramento de nível d'água",
+        "O QA/QC prioriza o recebimento e o comportamento das leituras mais recentes. A série histórica é preservada para interpretação hidrogeológica.",
+    )
+
+    st.info(
+        "**Importante:** tendência de rebaixamento ou recuperação, sozinha, não é tratada como falha de QA/QC. "
+        "Um rebaixamento pode ser coerente com a operação, especialmente próximo a poços tubulares de bombeamento (PTR). "
+        "A série histórica deve ser interpretada junto à distância dos PTRs, ao regime de bombeamento e à pluviometria quando disponível."
     )
 
     n_trav = int(fisicos["motivos"].str.contains("travado", case=False, na=False).sum())
@@ -736,8 +742,8 @@ if aba_qc:
     n_zero = int(fisicos["zero_auto_persistente"].sum())
     n_fundo = int(fisicos["repeticao_no_fundo"].sum())
     kpi_cards([
-        ("Flatline atual", str(n_trav), "sequência constante suspeita", "danger" if n_trav else "ok"),
-        ("Com outlier forte", str(n_out), "instrumentos, sem exclusão automática", "warn"),
+        ("Flatline recente", str(n_trav), "sequência constante nas últimas leituras", "danger" if n_trav else "ok"),
+        ("Outlier recente", str(n_out), "últimos 180 dias · sem exclusão automática", "warn"),
         ("Zero automático persistente", str(n_zero), "poços tubulares — conferir canal", "warn"),
         ("No limite de profundidade", str(n_fundo), "pode representar ponto seco", "info"),
     ])
@@ -794,7 +800,7 @@ if aba_inst:
     section(
         "Exploração",
         "Abra um instrumento e entenda seu comportamento",
-        "A série histórica fica ao lado do resultado do QA/QC, facilitando a revisão pela equipe técnica.",
+        "O QA/QC mostra a saúde atual; a série histórica ajuda a interpretar se a evolução do nível d’água é coerente com bombeamento, pluviometria e contexto local.",
     )
 
     busca = st.text_input("Buscar instrumento", placeholder="Ex.: 0027-INA-054")
@@ -815,11 +821,20 @@ if aba_inst:
             unsafe_allow_html=True,
         )
 
+        ptr = str(row.get("ptr_mais_proximo", "") or "").strip()
+        dist_ptr = pd.to_numeric(row.get("dist_ptr_m"), errors="coerce")
+        if ptr and pd.notna(dist_ptr) and str(row.get("natureza", "")) != "Poco Tubular":
+            st.info(
+                f"**Contexto operacional:** PTR mais próximo: **{ptr}**, a aproximadamente **{float(dist_ptr):.0f} m**. "
+                "A proximidade não altera o QA/QC, mas ajuda a interpretar a série histórica: um rebaixamento pode ser resposta esperada ao bombeamento. "
+                "Sempre avaliar junto ao regime de operação do PTR e à pluviometria quando disponível."
+            )
+
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Leituras", int(row.get("leituras", 0)))
         m2.metric("Dias sem leitura", "—" if pd.isna(row.get("dias_sem_leitura")) else int(row.get("dias_sem_leitura")))
-        m3.metric("Repetição final", f'{int(row.get("repeticao_final_n", 0))} leituras')
-        m4.metric("Outliers fortes", int(row.get("outliers_fortes", 0)))
+        m3.metric("Repetição recente", f'{int(row.get("repeticao_final_n", 0))} leituras')
+        m4.metric("Outliers recentes", int(row.get("outliers_fortes", 0)))
 
         # Integra QA/QC e resultado histórico do rebaixamento no detalhe do instrumento.
         if not tx.empty:
@@ -953,6 +968,7 @@ if aba_metodo:
         ["Recebimento manual", "Janela mais ampla, também adaptada à cadência histórica", "Não penaliza campanha manual como se fosse telemetria"],
         ["Flatline automático", "≥ 10 leituras idênticas e ≥ 10 dias", "Prioridade de revisão"],
         ["Flatline manual", "≥ 6 leituras idênticas e ≥ 90 dias", "Sinal de revisão"],
+        ["Contexto hidrogeológico", "Tendência histórica + proximidade de PTR + chuva/bombeamento", "Rebaixamento/recuperação não é falha de QA/QC por si só"],
         ["Limite de profundidade", "NA repetido ≈ profundidade do instrumento", "Tratado como possível ponto seco, não como sensor travado"],
         ["Outlier", "Pico isolado forte com retorno ao patamar anterior", "Somente sinaliza; não exclui"],
         ["Poço tubular", "Outlier não é aplicado; zero automático persistente é destacado separadamente", "Evita confundir efeito operacional com falha"],
