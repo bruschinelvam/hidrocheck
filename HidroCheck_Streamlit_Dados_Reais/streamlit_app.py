@@ -766,8 +766,8 @@ if aba_visao:
         kpi_cards([
             ("Séries de tendência", f"{len(tx)}", "módulo histórico do rebaixamento", "info"),
             ("Tendências significativas", f"{n_sig_monitor}", "monitoramento · p < 0,05", "ok"),
-            ("Alegria Norte", f"{med_norte:.2f} m/ano" if pd.notna(med_norte) else "—", "mediana · rebaixamento predominante", "danger"),
-            ("Alegria Sul", f"+{med_sul:.2f} m/ano" if pd.notna(med_sul) and med_sul >= 0 else (f"{med_sul:.2f} m/ano" if pd.notna(med_sul) else "—"), "mediana · recuperação predominante", "ok"),
+            ("Setor Norte", f"{med_norte:.2f} m/ano" if pd.notna(med_norte) else "—", "mediana · rebaixamento predominante", "danger"),
+            ("Setor Sul", f"+{med_sul:.2f} m/ano" if pd.notna(med_sul) and med_sul >= 0 else (f"{med_sul:.2f} m/ano" if pd.notna(med_sul) else "—"), "mediana · recuperação predominante", "ok"),
         ])
         st.info("O mapa completo, rankings e leitura por setor estão na aba **Resultados do rebaixamento**.")
     else:
@@ -991,9 +991,9 @@ if aba_op:
             st.markdown("#### Leitura por setor")
             if not tx_sig.empty:
                 med = tx_sig.groupby("localidade")["taxa"].median()
-                for nome in ["Alegria Norte", "Alegria Sul", "Alegria Centro", "Cava Germano"]:
-                    if nome in med.index:
-                        st.markdown(sector_card(nome, float(med.loc[nome])), unsafe_allow_html=True)
+                for nome_base, nome_exibicao in [("Alegria Norte", "Setor Norte"), ("Alegria Sul", "Setor Sul")]:
+                    if nome_base in med.index:
+                        st.markdown(sector_card(nome_exibicao, float(med.loc[nome_base])), unsafe_allow_html=True)
                 st.caption("Valores negativos = rebaixamento; positivos = recuperação.")
 
         if not tx_sig.empty:
