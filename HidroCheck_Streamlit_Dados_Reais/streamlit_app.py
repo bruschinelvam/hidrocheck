@@ -504,20 +504,70 @@ def mapa_saude_interativo(df: pd.DataFrame, key_prefix: str, height: int = 650) 
             )
         )
 
-    fig.update_traces(
-        marker=dict(size=11, line=dict(width=1.4, color="#FFFFFF"), opacity=0.98),
-        textposition="top center",
-        textfont=dict(size=10, color="#111827", family="Segoe UI Semibold, Segoe UI, Arial"),
-        cliponaxis=False,
-    )
+    # Hierarquia visual: alertas ganham mais destaque; pontos OK permanecem discretos.
+    tamanho_status = {"PRIORITÁRIO": 13, "ATENÇÃO": 11, "OBSERVAR": 10, "OK": 9}
+    for trace in fig.data:
+        trace.update(
+            marker=dict(
+                size=tamanho_status.get(trace.name, 9),
+                line=dict(width=1.5, color="#FFFFFF"),
+                opacity=0.98,
+            ),
+            textposition="top center",
+            textfont=dict(size=10, color="#111827", family="Segoe UI Semibold, Segoe UI, Arial"),
+            cliponaxis=False,
+        )
+
     fig.update_yaxes(scaleanchor="x", scaleratio=1)
     plot_clean(fig, height)
-    fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(showgrid=False)
+
+    # Coordenadas UTM por extenso: evita abreviações automáticas como 654k e 7.768M.
+    def _ticks_utm(vmin: float, vmax: float, passo: int = 2000):
+        inicio = int(vmin // passo) * passo
+        fim = int((vmax // passo) + 1) * passo
+        vals = list(range(inicio, fim + passo, passo))
+        # Mantém só ticks dentro/levemente além da área mostrada.
+        vals = [v for v in vals if v >= vmin - passo * 0.25 and v <= vmax + passo * 0.25]
+        txt = [f"{int(v):,}".replace(",", ".") for v in vals]
+        return vals, txt
+
+    xmin, xmax = float(base["x"].min()), float(base["x"].max())
+    ymin, ymax = float(base["y"].min()), float(base["y"].max())
+    xpad = max((xmax - xmin) * 0.04, 250)
+    ypad = max((ymax - ymin) * 0.04, 250)
+    xr = [xmin - xpad, xmax + xpad]
+    yr = [ymin - ypad, ymax + ypad]
+    xticks, xtext = _ticks_utm(xr[0], xr[1], 2000)
+    yticks, ytext = _ticks_utm(yr[0], yr[1], 2000)
+
+    fig.update_xaxes(
+        showgrid=False,
+        range=xr,
+        tickmode="array", tickvals=xticks, ticktext=xtext,
+        title_text="Coordenada UTM E (m)",
+        tickfont=dict(color="#263445", size=12),
+        title_font=dict(color="#263445", size=13),
+        linecolor="#94A3B8", linewidth=1, mirror=False,
+    )
+    fig.update_yaxes(
+        showgrid=False,
+        range=yr,
+        tickmode="array", tickvals=yticks, ticktext=ytext,
+        title_text="Coordenada UTM N (m)",
+        tickfont=dict(color="#263445", size=12),
+        title_font=dict(color="#263445", size=13),
+        linecolor="#94A3B8", linewidth=1, mirror=False,
+    )
     fig.update_layout(
         hoverlabel=dict(bgcolor="white", font_color="#17212B", font_size=12),
-        legend=dict(bgcolor="rgba(255,255,255,0.90)", bordercolor="#CBD5E1", borderwidth=1),
-        margin=dict(l=18, r=18, t=18, b=18),
+        legend=dict(
+            bgcolor="rgba(255,255,255,0.94)",
+            bordercolor="#D7DEE7", borderwidth=1,
+            font=dict(color="#17212B", size=11),
+            itemsizing="constant",
+            x=1.01, y=1.0, xanchor="left", yanchor="top",
+        ),
+        margin=dict(l=26, r=120, t=18, b=28),
     )
     return fig
 
@@ -597,7 +647,7 @@ if not eventos.empty:
     eventos = eventos[eventos["instrumento"].astype(str).isin(rede["instrumento"].astype(str))].copy()
     eventos["data"] = pd.to_datetime(eventos["data"], errors="coerce")
 
-ativos = rede[(rede.get("situacao_cadastro", "Ativo").astype(str).str.casefold() == "ativo") & (rede["status_qaqc"] != "NÃO AVALIADO")].copy()
+ativos = rede[(rede.get("situacao_operacional", rede.get("situacao_cadastro", "Ativo")).astype(str).str.casefold() == "ativo") & (rede["status_qaqc"] != "NÃO AVALIADO")].copy()
 fora_operacao = rede[rede["status_qaqc"] == "FORA DE OPERAÇÃO"].copy()
 fisicos = ativos.copy()
 prioritarios = fisicos[fisicos["status_qaqc"] == "PRIORITÁRIO"].copy()
@@ -659,7 +709,7 @@ if aba_visao:
     st.markdown(
         """
         <div class="flow">
-            <div class="flow-step"><div class="num">1</div><b>Rede completa</b><span>O status cadastral é verificado primeiro; somente instrumentos ativos entram no QA/QC operacional.</span></div>
+            <div class="flow-step"><div class="num">1</div><b>Rede completa</b><span>O status operacional é verificado primeiro; somente instrumentos ativos entram no QA/QC operacional.</span></div>
             <div class="flow-step"><div class="num">2</div><b>QA/QC</b><span>Recebimento e sinais nas leituras recentes: flatline, repetições, outliers e inconsistências.</span></div>
             <div class="flow-step"><div class="num">3</div><b>Exploração</b><span>Cada instrumento pode ser aberto e revisado em detalhe.</span></div>
             <div class="flow-step"><div class="num">4</div><b>Tendência</b><span>Theil–Sen + Mann–Kendall quantificam a evolução do nível d’água.</span></div>
@@ -679,7 +729,7 @@ if aba_visao:
     left, right = st.columns([1.45, 1], gap="large")
     with left:
         st.markdown("#### Saúde espacial da rede")
-        st.caption(f"{len(fisicos)} instrumentos ativos avaliados no Complexo Germano. Instrumentos tamponados, descomissionados ou destruídos ficam fora dos alertas operacionais.")
+        st.caption(f"{len(fisicos)} instrumentos ativos avaliados no Complexo Germano. Instrumentos tamponados, descomissionados ou destruídos ficam fora dos alertas operacionais, inclusive quando há ajuste operacional temporário pendente no cadastro.")
         fig = mapa_saude_interativo(fisicos, "visao", 520)
         st.plotly_chart(fig, width="stretch")
 
@@ -739,15 +789,15 @@ if aba_qc:
         "A série histórica deve ser interpretada junto à distância dos PTRs, ao regime de bombeamento e à pluviometria quando disponível."
     )
 
-    st.markdown("#### Situação cadastral da instrumentação")
-    situ = rede.get("situacao_cadastro", pd.Series(dtype=str)).fillna("Não informado").astype(str)
+    st.markdown("#### Situação operacional da instrumentação")
+    situ = rede.get("situacao_operacional", rede.get("situacao_cadastro", pd.Series(dtype=str))).fillna("Não informado").astype(str)
     kpi_cards([
         ("Ativos", str(int((situ.str.casefold() == "ativo").sum())), "avaliados no QA/QC atual", "ok"),
         ("Tamponados", str(int((situ.str.casefold() == "tamponado").sum())), "não geram alerta por falta de dados", "info"),
         ("Descomissionados", str(int((situ.str.casefold() == "descomissionado").sum())), "mantidos apenas para histórico", "info"),
         ("Destruídos / outros", str(int((~situ.str.casefold().isin(["ativo", "tamponado", "descomissionado"])).sum())), "fora do QA/QC operacional", "info"),
     ])
-    st.caption("O status cadastral é a primeira regra do QA/QC. Um instrumento fora de operação não deve aparecer como falha de transmissão apenas porque deixou de receber leituras.")
+    st.caption("O status operacional é verificado antes do QA/QC. Quando houver informação de campo mais recente que o cadastro, ela pode ser aplicada temporariamente com rastreabilidade até a atualização da base oficial.")
 
     n_trav = int(fisicos["motivos"].str.contains("travado", case=False, na=False).sum())
     n_out = int((fisicos["outliers_fortes"] > 0).sum())
@@ -794,9 +844,9 @@ if aba_qc:
 
     st.markdown("#### Lista de revisão")
     show = fisicos[fisicos["status_qaqc"].isin(["PRIORITÁRIO", "ATENÇÃO", "OBSERVAR"])].copy()
-    cols = ["instrumento", "localidade", "natureza", "situacao_cadastro", "status_qaqc", "recebimento", "ultima", "motivos"]
+    cols = ["instrumento", "localidade", "natureza", "situacao_operacional", "status_qaqc", "recebimento", "ultima", "motivos"]
     tab = show[cols].copy()
-    tab.columns = ["Instrumento", "Localidade", "Tipo", "Situação cadastral", "QA/QC", "Recebimento", "Última leitura", "Sinais identificados"]
+    tab.columns = ["Instrumento", "Localidade", "Tipo", "Situação operacional", "QA/QC", "Recebimento", "Última leitura", "Sinais identificados"]
     tab["Última leitura"] = pd.to_datetime(tab["Última leitura"], errors="coerce").dt.strftime("%d/%m/%Y")
     st.dataframe(tab, width="stretch", hide_index=True, height=500)
 
@@ -827,18 +877,20 @@ if aba_inst:
         sel = st.selectbox("Instrumento", filtradas, index=0)
         row = rede[rede["instrumento"] == sel].iloc[0]
         status_cad = str(row.get("situacao_cadastro", "—") or "—")
+        status_op = str(row.get("situacao_operacional", status_cad) or status_cad)
         status_hga = str(row.get("situacao_hga_ultima", "") or "").strip()
         status_hga_txt = f' · <strong>Última HGA:</strong> {status_hga}' if status_hga else ''
+        status_override_txt = '' if status_op.casefold() == status_cad.casefold() else f'<br><strong>Situação operacional:</strong> {status_op} <em>(ajuste temporário informado pela equipe)</em>'
         st.markdown(
             f'<div class="callout"><strong>{sel}</strong> · {row.get("localidade", "—")} · {row.get("natureza", "—")}<br>'
-            f'<strong>Situação cadastral:</strong> {status_cad}{status_hga_txt}<br>'
+            f'<strong>Situação cadastral:</strong> {status_cad}{status_hga_txt}{status_override_txt}<br>'
             f'<strong>QA/QC:</strong> {row.get("status_qaqc", "—")} · <strong>Recebimento:</strong> {row.get("recebimento", "—")}<br>'
             f'{row.get("motivos", "")}</div>',
             unsafe_allow_html=True,
         )
 
-        if status_cad.casefold() == "ativo" and str(row.get("recebimento", "")) == "INTERROMPIDO":
-            st.warning("O cadastro ainda indica **Ativo**, mas o recebimento está interrompido. Antes de tratar como falha de transmissão, confirme em campo/cadastro se o instrumento foi desativado, tamponado ou retirado de operação.")
+        if status_op.casefold() == "ativo" and str(row.get("recebimento", "")) == "INTERROMPIDO":
+            st.warning("O instrumento está sendo tratado como **Ativo**, mas o recebimento está interrompido. Antes de tratar como falha de transmissão, confirme em campo/cadastro se houve desativação, tamponamento ou retirada de operação.")
 
         ptr = str(row.get("ptr_mais_proximo", "") or "").strip()
         dist_ptr = pd.to_numeric(row.get("dist_ptr_m"), errors="coerce")
