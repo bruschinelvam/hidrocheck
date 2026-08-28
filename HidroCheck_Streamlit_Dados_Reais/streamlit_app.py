@@ -608,7 +608,7 @@ run_col, note_col = st.columns([1, 3], vertical_alignment="center")
 with run_col:
     processar = st.button("↻  Atualizar QA/QC", type="primary", width="stretch")
 with note_col:
-    st.caption("Reprocessa **HGA-GERAL-06082026.xlsx** + **Coordenadas.xlsx** considerando somente o **Complexo Germano**. Os alertas são uma triagem automática para revisão técnica; não significam defeito confirmado.")
+    st.caption("Reprocessa **HGA-28082026.xlsx** + **Coordenadas.xlsx** considerando somente o **Complexo Germano**. Os alertas são uma triagem automática para revisão técnica; não significam defeito confirmado.")
 
 if processar:
     with st.spinner("Atualizando situação cadastral e QA/QC dos instrumentos do Complexo Germano..."):
@@ -648,7 +648,6 @@ if not eventos.empty:
     eventos["data"] = pd.to_datetime(eventos["data"], errors="coerce")
 
 ativos = rede[(rede.get("situacao_operacional", rede.get("situacao_cadastro", "Ativo")).astype(str).str.casefold() == "ativo") & (rede["status_qaqc"] != "NÃO AVALIADO")].copy()
-fora_operacao = rede[rede["status_qaqc"] == "FORA DE OPERAÇÃO"].copy()
 fisicos = ativos.copy()
 prioritarios = fisicos[fisicos["status_qaqc"] == "PRIORITÁRIO"].copy()
 atencao = fisicos[fisicos["status_qaqc"] == "ATENÇÃO"].copy()
@@ -729,7 +728,7 @@ if aba_visao:
     left, right = st.columns([1.45, 1], gap="large")
     with left:
         st.markdown("#### Saúde espacial da rede")
-        st.caption(f"{len(fisicos)} instrumentos ativos avaliados no Complexo Germano. Instrumentos tamponados, descomissionados ou destruídos ficam fora dos alertas operacionais, inclusive quando há ajuste operacional temporário pendente no cadastro.")
+        st.caption(f"{len(fisicos)} instrumentos ativos avaliados no Complexo Germano. Instrumentos fora de operação são excluídos do universo do HidroCheck antes das análises.")
         fig = mapa_saude_interativo(fisicos, "visao", 520)
         st.plotly_chart(fig, width="stretch")
 
@@ -790,12 +789,11 @@ if aba_qc:
     )
 
     st.markdown("#### Situação operacional da instrumentação")
-    situ = rede.get("situacao_operacional", rede.get("situacao_cadastro", pd.Series(dtype=str))).fillna("Não informado").astype(str)
     kpi_cards([
-        ("Ativos", str(int((situ.str.casefold() == "ativo").sum())), "avaliados no QA/QC atual", "ok"),
-        ("Tamponados", str(int((situ.str.casefold() == "tamponado").sum())), "não geram alerta por falta de dados", "info"),
-        ("Descomissionados", str(int((situ.str.casefold() == "descomissionado").sum())), "mantidos apenas para histórico", "info"),
-        ("Destruídos / outros", str(int((~situ.str.casefold().isin(["ativo", "tamponado", "descomissionado"])).sum())), "fora do QA/QC operacional", "info"),
+        ("Ativos avaliados", str(len(fisicos)), "único universo considerado pelo HidroCheck", "ok"),
+        ("Recebendo", str(len(recebendo)), "leituras dentro da cadência esperada", "ok"),
+        ("Para revisão", str(n_revisao), "atenção, observar ou prioridade", "warn"),
+        ("Prioridade alta", str(len(prioritarios)), "revisão recomendada primeiro", "danger"),
     ])
     st.caption("O status operacional é verificado antes do QA/QC. Quando houver informação de campo mais recente que o cadastro, ela pode ser aplicada temporariamente com rastreabilidade até a atualização da base oficial.")
 
@@ -838,7 +836,7 @@ if aba_qc:
         st.plotly_chart(fig_rec, width="stretch")
 
     st.markdown("#### Mapa de saúde da instrumentação")
-    st.caption(f"{len(fisicos)} instrumentos **ativos** do Complexo Germano entram no mapa de saúde. Pontos fora de operação permanecem disponíveis na aba Explorar instrumento, mas não geram alerta de QA/QC.")
+    st.caption(f"{len(fisicos)} instrumentos **ativos** do Complexo Germano entram no mapa e no QA/QC. Instrumentos fora de operação não fazem parte desta versão do HidroCheck.")
     fig_map = mapa_saude_interativo(fisicos, "qaqc", 640)
     st.plotly_chart(fig_map, width="stretch")
 
@@ -1024,7 +1022,7 @@ if aba_metodo:
     st.markdown(
         """
         <div class="flow">
-            <div class="flow-step"><div class="num">1</div><b>Escopo</b><span>Complexo Germano + ativos + Monitoramento Hidrogeológico; cavas fora do denominador.</span></div>
+            <div class="flow-step"><div class="num">1</div><b>Escopo</b><span>Complexo Germano · somente instrumentos ativos de monitoramento hidrogeológico.</span></div>
             <div class="flow-step"><div class="num">2</div><b>Cadência</b><span>Calculada por instrumento a partir do histórico recente.</span></div>
             <div class="flow-step"><div class="num">3</div><b>Flatline</b><span>Sequências idênticas são avaliadas considerando fonte e duração.</span></div>
             <div class="flow-step"><div class="num">4</div><b>Outlier</b><span>Somente picos isolados fortes; nenhum dado é removido automaticamente.</span></div>
