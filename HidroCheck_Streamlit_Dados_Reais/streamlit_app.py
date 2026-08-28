@@ -584,7 +584,8 @@ with st.sidebar:
     st.caption("Resultados da operação do sistema de rebaixamento")
     st.divider()
     st.caption("Escopo atual")
-    st.markdown("**Instrumentos ativos de monitoramento hidrogeológico**")
+    st.markdown("**Análises: somente ativos**")
+    st.caption("Inativos/tamponados ficam disponíveis apenas em Explorar instrumento")
     st.divider()
     st.caption("Fluxo")
     st.markdown("**Cadastro → leituras → QA/QC → tendência → decisão**")
@@ -608,7 +609,7 @@ run_col, note_col = st.columns([1, 3], vertical_alignment="center")
 with run_col:
     processar = st.button("↻  Atualizar QA/QC", type="primary", width="stretch")
 with note_col:
-    st.caption("Reprocessa **HGA-28082026.xlsx** + **Coordenadas.xlsx** considerando somente o **Complexo Germano**. Os alertas são uma triagem automática para revisão técnica; não significam defeito confirmado.")
+    st.caption("Reprocessa **HGA-28082026.xlsx** + **Coordenadas.xlsx** considerando somente o **Complexo Germano**. Somente instrumentos ativos entram nas análises. Os alertas usam as leituras mais recentes (ou a última recebida) e são uma triagem para revisão técnica.")
 
 if processar:
     with st.spinner("Atualizando situação cadastral e QA/QC dos instrumentos do Complexo Germano..."):
@@ -646,6 +647,19 @@ eventos = pd.read_csv(eventos_path) if eventos_path.exists() else pd.DataFrame()
 if not eventos.empty:
     eventos = eventos[eventos["instrumento"].astype(str).isin(rede["instrumento"].astype(str))].copy()
     eventos["data"] = pd.to_datetime(eventos["data"], errors="coerce")
+
+# Catálogo completo de Germano para a página Explorar instrumento.
+# Inativos/tamponados/descomissionados NÃO entram no QA/QC, mapas, KPIs ou
+# tendências, mas permanecem consultáveis com seu histórico.
+@st.cache_data(show_spinner=False)
+def _bases_catalogo_ui():
+    return carregar_bases(ROOT / "data")
+
+cad_catalogo, _hga_catalogo = _bases_catalogo_ui()
+catalogo = cad_catalogo[(cad_catalogo["Proposito"] == "Monitoramento Hidrogeologico") &
+                        (cad_catalogo["Natureza do Ponto"] != "Cava") &
+                        (~cad_catalogo["inst_id"].astype(str).str.contains("PVIRTUAL", case=False, na=False))].copy()
+catalogo["instrumento"] = catalogo["TAG HGA"].astype(str)
 
 ativos = rede[(rede.get("situacao_operacional", rede.get("situacao_cadastro", "Ativo")).astype(str).str.casefold() == "ativo") & (rede["status_qaqc"] != "NÃO AVALIADO")].copy()
 fisicos = ativos.copy()
@@ -709,7 +723,7 @@ if aba_visao:
         """
         <div class="flow">
             <div class="flow-step"><div class="num">1</div><b>Rede completa</b><span>O status operacional é verificado primeiro; somente instrumentos ativos entram no QA/QC operacional.</span></div>
-            <div class="flow-step"><div class="num">2</div><b>QA/QC</b><span>Recebimento e sinais nas leituras recentes: flatline, repetições, outliers e inconsistências.</span></div>
+            <div class="flow-step"><div class="num">2</div><b>QA/QC</b><span>Recebimento e sinais no dado mais recente: flatline automático, salto recente e elevação manual fora do padrão.</span></div>
             <div class="flow-step"><div class="num">3</div><b>Exploração</b><span>Cada instrumento pode ser aberto e revisado em detalhe.</span></div>
             <div class="flow-step"><div class="num">4</div><b>Tendência</b><span>Theil–Sen + Mann–Kendall quantificam a evolução do nível d’água.</span></div>
             <div class="flow-step"><div class="num">5</div><b>Resultado</b><span>O comportamento espacial apoia a leitura da operação do rebaixamento.</span></div>
@@ -728,7 +742,7 @@ if aba_visao:
     left, right = st.columns([1.45, 1], gap="large")
     with left:
         st.markdown("#### Saúde espacial da rede")
-        st.caption(f"{len(fisicos)} instrumentos ativos avaliados no Complexo Germano. Instrumentos fora de operação são excluídos do universo do HidroCheck antes das análises.")
+        st.caption(f"{len(fisicos)} instrumentos ativos avaliados no Complexo Germano. Instrumentos fora de operação não entram nas análises e ficam disponíveis apenas em Explorar instrumento.")
         fig = mapa_saude_interativo(fisicos, "visao", 520)
         st.plotly_chart(fig, width="stretch")
 
@@ -783,9 +797,10 @@ if aba_qc:
     )
 
     st.info(
-        "**Importante:** tendência de rebaixamento ou recuperação, sozinha, não é tratada como falha de QA/QC. "
-        "Um rebaixamento pode ser coerente com a operação, especialmente próximo a poços tubulares de bombeamento (PTR). "
-        "A série histórica deve ser interpretada junto à distância dos PTRs, ao regime de bombeamento e à pluviometria quando disponível."
+        "**Lógica operacional:** os alertas consideram a leitura mais recente — ou a última recebida quando um instrumento ativo está sem atualização. "
+        "Eventos antigos permanecem no histórico, mas não alteram o status atual. Em instrumentos **manuais**, pouca variação ou valores repetidos são esperados; "
+        "o alerta de comportamento é reservado a **elevação recente da cota de NA fora do padrão**. Tendência de rebaixamento/recuperação é interpretação hidrogeológica, "
+        "especialmente em função da proximidade de PTRs, bombeamento e pluviometria."
     )
 
     st.markdown("#### Situação operacional da instrumentação")
@@ -797,15 +812,15 @@ if aba_qc:
     ])
     st.caption("O status operacional é verificado antes do QA/QC. Quando houver informação de campo mais recente que o cadastro, ela pode ser aplicada temporariamente com rastreabilidade até a atualização da base oficial.")
 
-    n_trav = int(fisicos["motivos"].str.contains("travado", case=False, na=False).sum())
-    n_out = int((fisicos["outliers_fortes"] > 0).sum())
-    n_zero = int(fisicos["zero_auto_persistente"].sum())
-    n_fundo = int(fisicos["repeticao_no_fundo"].sum())
+    n_trav = int(fisicos["motivos"].str.contains("travadas", case=False, na=False).sum())
+    n_salto = int(fisicos.get("salto_auto_recente", pd.Series(False, index=fisicos.index)).map(b).sum())
+    n_manual = int(fisicos.get("elevacao_manual_anomala", pd.Series(False, index=fisicos.index)).map(b).sum())
+    n_interromp = int((fisicos["recebimento"] == "INTERROMPIDO").sum())
     kpi_cards([
-        ("Flatline recente", str(n_trav), "sequência constante nas últimas leituras", "danger" if n_trav else "ok"),
-        ("Outlier recente", str(n_out), "últimos 180 dias · sem exclusão automática", "warn"),
-        ("Zero automático persistente", str(n_zero), "poços tubulares — conferir canal", "warn"),
-        ("No limite de profundidade", str(n_fundo), "pode representar ponto seco", "info"),
+        ("Flatline automático", str(n_trav), "sequência constante no fim da série", "danger" if n_trav else "ok"),
+        ("Salto automático", str(n_salto), "última variação fora do padrão", "warn" if n_salto else "ok"),
+        ("Elevação manual", str(n_manual), "última campanha acima do esperado", "warn" if n_manual else "ok"),
+        ("Recebimento interrompido", str(n_interromp), "instrumentos ativos sem atualização", "danger" if n_interromp else "ok"),
     ])
 
     c1, c2 = st.columns([1, 1.5], gap="large")
@@ -836,7 +851,7 @@ if aba_qc:
         st.plotly_chart(fig_rec, width="stretch")
 
     st.markdown("#### Mapa de saúde da instrumentação")
-    st.caption(f"{len(fisicos)} instrumentos **ativos** do Complexo Germano entram no mapa e no QA/QC. Instrumentos fora de operação não fazem parte desta versão do HidroCheck.")
+    st.caption(f"{len(fisicos)} instrumentos **ativos** do Complexo Germano entram no mapa e no QA/QC. Instrumentos fora de operação ficam fora do QA/QC e aparecem somente em Explorar instrumento.")
     fig_map = mapa_saude_interativo(fisicos, "qaqc", 640)
     st.plotly_chart(fig_map, width="stretch")
 
@@ -853,18 +868,17 @@ if aba_qc:
 # -----------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def _hga_ui():
-    _, h = carregar_bases(ROOT / "data")
-    return h
+    return _bases_catalogo_ui()[1]
 
 if aba_inst:
     section(
         "Exploração",
         "Abra um instrumento e entenda seu comportamento",
-        "O QA/QC mostra a saúde atual; a série histórica ajuda a interpretar se a evolução do nível d’água é coerente com bombeamento, pluviometria e contexto local.",
+        "Esta é a única página que também permite consultar instrumentos inativos, tamponados, descomissionados ou destruídos. Eles não entram no QA/QC nem nas análises de rebaixamento.",
     )
 
     busca = st.text_input("Buscar instrumento", placeholder="Ex.: 0027-INA-054")
-    opcoes = rede["instrumento"].dropna().astype(str).tolist()
+    opcoes = sorted(catalogo["instrumento"].dropna().astype(str).unique().tolist())
     if busca:
         filtradas = [x for x in opcoes if busca.lower() in x.lower()]
     else:
@@ -873,40 +887,68 @@ if aba_inst:
         st.info("Nenhum instrumento encontrado.")
     else:
         sel = st.selectbox("Instrumento", filtradas, index=0)
-        row = rede[rede["instrumento"] == sel].iloc[0]
-        status_cad = str(row.get("situacao_cadastro", "—") or "—")
-        status_op = str(row.get("situacao_operacional", status_cad) or status_cad)
-        status_hga = str(row.get("situacao_hga_ultima", "") or "").strip()
-        status_hga_txt = f' · <strong>Última HGA:</strong> {status_hga}' if status_hga else ''
-        status_override_txt = '' if status_op.casefold() == status_cad.casefold() else f'<br><strong>Situação operacional:</strong> {status_op} <em>(ajuste temporário informado pela equipe)</em>'
+        crow = catalogo[catalogo["instrumento"] == sel].iloc[0]
+        qmatch = rede[rede["instrumento"].astype(str) == str(sel)]
+        qrow = qmatch.iloc[0] if not qmatch.empty else None
+
+        status_cad = str(crow.get("Situacao Atual", "—") or "—")
+        status_op = str(crow.get("situacao_operacional", status_cad) or status_cad)
+        ativo_sel = status_op.strip().casefold() == "ativo"
+        localidade = str(crow.get("Localidade", "—") or "—")
+        natureza = str(crow.get("Natureza do Ponto", "—") or "—")
+
+        if qrow is not None:
+            status_hga = str(qrow.get("situacao_hga_ultima", "") or "").strip()
+            status_hga_txt = f' · <strong>Última HGA:</strong> {status_hga}' if status_hga else ''
+            status_override_txt = '' if status_op.casefold() == status_cad.casefold() else f'<br><strong>Situação operacional:</strong> {status_op} <em>(ajuste temporário informado pela equipe)</em>'
+            qaqc_txt = str(qrow.get("status_qaqc", "—"))
+            receb_txt = str(qrow.get("recebimento", "—"))
+            motivo_txt = str(qrow.get("motivos", ""))
+        else:
+            status_hga_txt = ''
+            status_override_txt = '' if status_op.casefold() == status_cad.casefold() else f'<br><strong>Situação operacional:</strong> {status_op} <em>(ajuste temporário informado pela equipe)</em>'
+            qaqc_txt = "Fora das análises"
+            receb_txt = "—"
+            motivo_txt = "Instrumento fora de operação: disponível somente para consulta histórica."
+
         st.markdown(
-            f'<div class="callout"><strong>{sel}</strong> · {row.get("localidade", "—")} · {row.get("natureza", "—")}<br>'
+            f'<div class="callout"><strong>{sel}</strong> · {localidade} · {natureza}<br>'
             f'<strong>Situação cadastral:</strong> {status_cad}{status_hga_txt}{status_override_txt}<br>'
-            f'<strong>QA/QC:</strong> {row.get("status_qaqc", "—")} · <strong>Recebimento:</strong> {row.get("recebimento", "—")}<br>'
-            f'{row.get("motivos", "")}</div>',
+            f'<strong>QA/QC:</strong> {qaqc_txt} · <strong>Recebimento:</strong> {receb_txt}<br>'
+            f'{motivo_txt}</div>',
             unsafe_allow_html=True,
         )
 
-        if status_op.casefold() == "ativo" and str(row.get("recebimento", "")) == "INTERROMPIDO":
-            st.warning("O instrumento está sendo tratado como **Ativo**, mas o recebimento está interrompido. Antes de tratar como falha de transmissão, confirme em campo/cadastro se houve desativação, tamponamento ou retirada de operação.")
+        if not ativo_sel:
+            st.info("Este instrumento está **fora de operação** e, por isso, não entra nos alertas, mapas, KPIs ou cálculo de tendência do HidroCheck. O histórico abaixo é mantido apenas para consulta.")
+        elif qrow is not None and str(qrow.get("recebimento", "")) == "INTERROMPIDO":
+            ult_txt = pd.to_datetime(qrow.get("ultima"), errors="coerce")
+            ult_txt = ult_txt.strftime("%d/%m/%Y") if pd.notna(ult_txt) else "não disponível"
+            st.warning(f"O instrumento está **Ativo**, mas o recebimento está **interrompido**. Último valor recebido: **{ult_txt}**. O QA/QC usa esse último valor como referência para a condição atual.")
 
-        ptr = str(row.get("ptr_mais_proximo", "") or "").strip()
-        dist_ptr = pd.to_numeric(row.get("dist_ptr_m"), errors="coerce")
-        if ptr and pd.notna(dist_ptr) and str(row.get("natureza", "")) != "Poco Tubular":
-            st.info(
-                f"**Contexto operacional:** PTR mais próximo: **{ptr}**, a aproximadamente **{float(dist_ptr):.0f} m**. "
-                "A proximidade não altera o QA/QC, mas ajuda a interpretar a série histórica: um rebaixamento pode ser resposta esperada ao bombeamento. "
-                "Sempre avaliar junto ao regime de operação do PTR e à pluviometria quando disponível."
-            )
+        if qrow is not None:
+            ptr = str(qrow.get("ptr_mais_proximo", "") or "").strip()
+            dist_ptr = pd.to_numeric(qrow.get("dist_ptr_m"), errors="coerce")
+            if ptr and pd.notna(dist_ptr) and natureza != "Poco Tubular":
+                st.info(
+                    f"**Contexto hidrogeológico:** PTR ativo mais próximo: **{ptr}**, a aproximadamente **{float(dist_ptr):.0f} m**. "
+                    "A proximidade não altera o QA/QC. Ela serve para interpretar a série histórica: rebaixamento pode ser resposta esperada ao bombeamento. "
+                    "Avaliar junto ao regime do PTR e à pluviometria quando disponível."
+                )
 
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Leituras", int(row.get("leituras", 0)))
-        m2.metric("Dias sem leitura", "—" if pd.isna(row.get("dias_sem_leitura")) else int(row.get("dias_sem_leitura")))
-        m3.metric("Repetição recente", f'{int(row.get("repeticao_final_n", 0))} leituras')
-        m4.metric("Outliers recentes", int(row.get("outliers_fortes", 0)))
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Origem recente", str(qrow.get("fonte_recente", "—")))
+            m2.metric("Dias sem leitura", "—" if pd.isna(qrow.get("dias_sem_leitura")) else int(qrow.get("dias_sem_leitura")))
+            if str(qrow.get("fonte_recente", "")) == "Manual":
+                var = pd.to_numeric(qrow.get("variacao_ultima_m"), errors="coerce")
+                m3.metric("Última variação de cota", "—" if pd.isna(var) else f"{float(var):+.2f} m")
+                m4.metric("Elevação fora do padrão", "Sim" if b(qrow.get("elevacao_manual_anomala")) else "Não")
+            else:
+                m3.metric("Repetição final", f'{int(qrow.get("repeticao_final_n", 0))} leituras')
+                m4.metric("Salto recente", "Sim" if b(qrow.get("salto_auto_recente")) else "Não")
 
-        # Integra QA/QC e resultado histórico do rebaixamento no detalhe do instrumento.
-        if not tx.empty:
+        # Tendência histórica só existe para o universo ATIVO que passou pelos critérios do módulo.
+        if ativo_sel and not tx.empty:
             import re as _re_tx
             sid_tx = _re_tx.sub(r"\s+", "", str(sel)).upper()
             tx_row = tx[tx["inst_id"].astype(str).str.replace(r"\s+", "", regex=True).str.upper() == sid_tx]
@@ -926,26 +968,32 @@ if aba_inst:
         import re as _re
         sid = _re.sub(r"\s+", "", str(sel)).upper()
         serie = h[h["inst_id"] == sid].copy()
-        serie = serie[(serie["data"].notna()) & (serie["data"] <= pd.Timestamp("2026-08-06")) & serie["cota_na_m"].notna()]
+        serie = serie[(serie["data"].notna()) & (serie["data"] <= pd.Timestamp("2026-08-28")) & serie["cota_na_m"].notna()]
         if serie.empty:
             st.warning("Não há série de Cota_NA disponível para este instrumento na HGA atual.")
         else:
+            st.markdown("#### Série histórica")
+            st.caption("O histórico é usado para interpretação hidrogeológica. Eventos antigos não alteram o alerta operacional de hoje.")
             fig_s = px.line(
                 serie.sort_values("data"), x="data", y="cota_na_m", color="tipo_dado",
                 labels={"data": "Data", "cota_na_m": "Cota do NA (m)", "tipo_dado": "Origem"},
             )
             fig_s.update_traces(mode="lines+markers", marker=dict(size=4))
-            if not eventos.empty:
-                evs = eventos[(eventos["instrumento"].astype(str) == sel) & (eventos["evento"] == "Outlier pontual forte")].dropna(subset=["data", "cota_na_m"])
+            if qrow is not None and not eventos.empty:
+                evs = eventos[(eventos["instrumento"].astype(str) == sel)].dropna(subset=["data", "cota_na_m"])
                 if not evs.empty:
-                    fig_s.add_trace(go.Scatter(x=evs["data"], y=evs["cota_na_m"], mode="markers", name="Outlier para revisão", marker=dict(size=10, symbol="x")))
+                    fig_s.add_trace(go.Scatter(
+                        x=evs["data"], y=evs["cota_na_m"], mode="markers",
+                        name="Sinal atual para revisão", marker=dict(size=11, symbol="x"),
+                        text=evs["evento"], hovertemplate="%{text}<br>%{x|%d/%m/%Y}<br>%{y:.2f} m<extra></extra>"
+                    ))
             plot_clean(fig_s, 520)
             st.plotly_chart(fig_s, width="stretch")
 
     st.download_button(
-        "⬇  Exportar QA/QC completo",
+        "⬇  Exportar QA/QC dos ativos",
         data=rede.to_csv(index=False).encode("utf-8-sig"),
-        file_name="HidroCheck_QAQC_rede.csv",
+        file_name="HidroCheck_QAQC_ativos.csv",
         mime="text/csv",
     )
 
@@ -1022,25 +1070,25 @@ if aba_metodo:
     st.markdown(
         """
         <div class="flow">
-            <div class="flow-step"><div class="num">1</div><b>Escopo</b><span>Complexo Germano · somente instrumentos ativos de monitoramento hidrogeológico.</span></div>
-            <div class="flow-step"><div class="num">2</div><b>Cadência</b><span>Calculada por instrumento a partir do histórico recente.</span></div>
-            <div class="flow-step"><div class="num">3</div><b>Flatline</b><span>Sequências idênticas são avaliadas considerando fonte e duração.</span></div>
-            <div class="flow-step"><div class="num">4</div><b>Outlier</b><span>Somente picos isolados fortes; nenhum dado é removido automaticamente.</span></div>
-            <div class="flow-step"><div class="num">5</div><b>Prioridade</b><span>Reservada a sinais atuais e acionáveis.</span></div>
+            <div class="flow-step"><div class="num">1</div><b>Escopo</b><span>QA/QC, mapas e tendências usam somente instrumentos ativos. Fora de operação aparece apenas em Explorar instrumento.</span></div>
+            <div class="flow-step"><div class="num">2</div><b>Último dado</b><span>O status de hoje considera as leituras finais da série — ou o último valor recebido quando a atualização foi interrompida.</span></div>
+            <div class="flow-step"><div class="num">3</div><b>Automáticos</b><span>Flatline e saltos abruptos são avaliados no fim da série.</span></div>
+            <div class="flow-step"><div class="num">4</div><b>Manuais</b><span>Repetição e pouca variação são aceitas; o alerta de comportamento é reservado a elevação recente da cota fora do padrão.</span></div>
+            <div class="flow-step"><div class="num">5</div><b>Histórico</b><span>Permanece íntegro para interpretação hidrogeológica; eventos antigos não mudam o alerta atual.</span></div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
     criterios = pd.DataFrame([
-        ["Recebimento automático", "Atraso comparado à cadência do próprio instrumento", "Evita limiar único para toda a rede"],
-        ["Recebimento manual", "Janela mais ampla, também adaptada à cadência histórica", "Não penaliza campanha manual como se fosse telemetria"],
-        ["Flatline automático", "≥ 10 leituras idênticas e ≥ 10 dias", "Prioridade de revisão"],
-        ["Flatline manual", "≥ 6 leituras idênticas e ≥ 90 dias", "Sinal de revisão"],
-        ["Contexto hidrogeológico", "Tendência histórica + proximidade de PTR + chuva/bombeamento", "Rebaixamento/recuperação não é falha de QA/QC por si só"],
-        ["Limite de profundidade", "NA repetido ≈ profundidade do instrumento", "Tratado como possível ponto seco, não como sensor travado"],
-        ["Outlier", "Pico isolado forte com retorno ao patamar anterior", "Somente sinaliza; não exclui"],
-        ["Poço tubular", "Outlier não é aplicado; zero automático persistente é destacado separadamente", "Evita confundir efeito operacional com falha"],
+        ["Status operacional", "Somente Ativo entra no QA/QC, mapas, KPIs e tendências", "Tamponado/inativo/descomissionado/destruído fica apenas em Explorar instrumento"],
+        ["Recebimento", "Atraso/interrupção comparados à cadência do próprio instrumento", "Um instrumento ativo sem atualização é sinalizado pelo último dado recebido"],
+        ["Automático · flatline", "Sequência idêntica no final da série (≥ 10 leituras e ≥ 10 dias)", "Foco no estado atual, não em repetições antigas"],
+        ["Automático · salto", "Última variação muito acima da variabilidade histórica recente", "Sinaliza mudança abrupta sem usar outliers antigos como alerta atual"],
+        ["Manual · comportamento", "Pouca variação/repetição não gera alerta; somente elevação recente da cota fora do padrão", "Respeita a natureza das campanhas manuais"],
+        ["Checagens físicas", "NA negativo ou inconsistência de cota avaliados no último registro recebido", "Evita carregar problemas históricos já superados para o status de hoje"],
+        ["Contexto hidrogeológico", "Histórico + proximidade de PTR + bombeamento + pluviometria", "Rebaixamento/recuperação não é falha de QA/QC por si só"],
+        ["Histórico", "Mantido integralmente para consulta e interpretação", "Eventos antigos permanecem visíveis, mas não alteram o semáforo atual"],
     ], columns=["Regra", "Critério", "Por quê"])
     st.dataframe(criterios, width="stretch", hide_index=True)
     st.info("Os limiares são uma primeira parametrização técnica e devem ser validados com a equipe antes de qualquer uso operacional definitivo.")
