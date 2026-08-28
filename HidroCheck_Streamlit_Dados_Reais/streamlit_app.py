@@ -124,6 +124,59 @@ st.markdown(
         background: rgba(255,255,255,.10);
     }
 
+    /* Navegação principal no topo do conteúdo */
+    div[data-testid="stRadio"] > div[role="radiogroup"] {
+        display: flex;
+        flex-wrap: nowrap;
+        gap: 6px;
+        width: 100%;
+        overflow-x: auto;
+        margin: 0 0 18px 0;
+        padding: 6px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        box-shadow: 0 1px 2px rgba(15,23,42,.035);
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] label {
+        flex: 1 0 140px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 46px;
+        margin: 0;
+        padding: 9px 12px;
+        border: 1px solid transparent;
+        border-radius: 10px;
+        background: transparent;
+        cursor: pointer;
+        transition: background-color .16s ease, border-color .16s ease, color .16s ease;
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] label:hover {
+        background: var(--sky);
+        border-color: #D5E5EA;
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked),
+    div[data-testid="stRadio"] > div[role="radiogroup"] label[data-selected="true"] {
+        background: var(--navy);
+        border-color: var(--navy);
+        box-shadow: 0 2px 7px rgba(11,42,61,.16);
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] label > div > div > div:first-child {
+        display: none;
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] label p {
+        color: var(--ink);
+        font-size: .88rem;
+        font-weight: 720;
+        line-height: 1.2;
+        text-align: center;
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked) p,
+    div[data-testid="stRadio"] > div[role="radiogroup"] label[data-selected="true"] p {
+        color: white;
+    }
+
     /* Botões */
     .stButton > button[kind="primary"] {
         background: var(--petrol);
@@ -605,6 +658,22 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Navegação principal: visível logo abaixo do cabeçalho.
+pagina = st.radio(
+    "Navegação principal",
+    [
+        "Visão geral",
+        "Saúde da rede",
+        "Explorar instrumento",
+        "Resultados do rebaixamento",
+        "Metodologia",
+    ],
+    index=0,
+    horizontal=True,
+    label_visibility="collapsed",
+    key="navegacao_principal",
+)
+
 run_col, note_col = st.columns([1, 3], vertical_alignment="center")
 with run_col:
     processar = st.button("↻  Atualizar QA/QC", type="primary", width="stretch")
@@ -692,22 +761,6 @@ kpi_cards([
     ("Para revisão", f"{n_revisao}", "atenção, observar ou prioridade", "warn"),
     ("Prioridade alta", f"{len(prioritarios)}", "revisão recomendada primeiro", "danger"),
 ])
-
-with st.sidebar:
-    st.divider()
-    st.caption("Navegação")
-    pagina = st.radio(
-        "Seções",
-        [
-            "Visão geral",
-            "Saúde da rede",
-            "Explorar instrumento",
-            "Resultados do rebaixamento",
-            "Metodologia",
-        ],
-        index=0,
-        label_visibility="collapsed",
-    )
 
 aba_visao = pagina == "Visão geral"
 aba_qc = pagina == "Saúde da rede"
