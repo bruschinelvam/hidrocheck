@@ -8,7 +8,7 @@ import re
 import numpy as np
 import pandas as pd
 
-DATA_REF = pd.Timestamp('2026-08-06')
+DATA_REF = pd.Timestamp('2026-08-28')
 JANELA_QAQC_OUTLIER_DIAS = 180
 JANELA_QAQC_AUTO_DIAS = 90
 JANELA_QAQC_MANUAL_DIAS = 180
@@ -19,6 +19,17 @@ GERMANO_XMIN = 648700.4479
 GERMANO_YMIN = 7760701.2652
 GERMANO_XMAX = 667298.2571
 GERMANO_YMAX = 7773899.3678
+
+# Ajustes operacionais temporários informados pela equipe.
+# Mantemos o status original do cadastro/HGA para rastreabilidade, mas o QA/QC
+# usa o status operacional efetivo até a base oficial ser atualizada.
+STATUS_OPERACIONAL_OVERRIDE = {
+    'G00-11PTR006': 'Tamponado',
+}
+
+def _situacao_operacional(tag: object, situacao_cadastro: object) -> str:
+    inst = _norm_tag(tag)
+    return STATUS_OPERACIONAL_OVERRIDE.get(inst, str(situacao_cadastro or '').strip())
 
 
 def _filtrar_complexo_germano(cad: pd.DataFrame) -> pd.DataFrame:
@@ -106,7 +117,9 @@ def _ptr_mais_proximo(c: pd.Series, cad: pd.DataFrame) -> tuple[str, float | Non
     y = pd.to_numeric(c.get('Y(m)'), errors='coerce')
     if pd.isna(x) or pd.isna(y):
         return '', None
-    ptr = cad[(cad['Situacao Atual'] == 'Ativo') & (cad['Natureza do Ponto'] == 'Poco Tubular')].copy()
+    cad = cad.copy()
+    cad['_situacao_operacional'] = cad.apply(lambda r: _situacao_operacional(r.get('TAG HGA'), r.get('Situacao Atual')), axis=1)
+    ptr = cad[(cad['_situacao_operacional'].astype(str).str.casefold() == 'ativo') & (cad['Natureza do Ponto'] == 'Poco Tubular')].copy()
     if ptr.empty:
         return '', None
     px = pd.to_numeric(ptr['X(m)'], errors='coerce')
@@ -122,7 +135,7 @@ def _ptr_mais_proximo(c: pd.Series, cad: pd.DataFrame) -> tuple[str, float | Non
 def carregar_bases(dir_dados: str | Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     p = Path(dir_dados)
     cad = pd.read_excel(p / 'Coordenadas.xlsx', sheet_name='Sheet1')
-    hga = pd.read_excel(p / 'HGA-GERAL-06082026.xlsx', sheet_name='Sheet1')
+    hga = pd.read_excel(p / 'HGA-28082026.xlsx', sheet_name='Sheet1')
 
     cad['inst_id'] = cad['TAG HGA'].map(_norm_tag)
     hga['inst_id'] = hga['Ponto'].map(_norm_tag)
@@ -131,8 +144,18 @@ def carregar_bases(dir_dados: str | Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     # aplicado antes do QA/QC e antes da exploração das séries, garantindo que
     # todas as páginas trabalhem com o mesmo universo espacial.
     cad = _filtrar_complexo_germano(cad)
-    ids_germano = set(cad['inst_id'].dropna().astype(str))
-    hga = hga[hga['inst_id'].isin(ids_germano)].copy()
+
+    # Escopo operacional do HidroCheck: SOMENTE instrumentos ativos.
+    # Qualquer item tamponado, descomissionado, inativo, destruído ou com
+    # override operacional diferente de 'Ativo' é excluído antes de todas as
+    # análises e não aparece em mapas, indicadores, exploração ou tendências.
+    cad['situacao_operacional'] = cad.apply(
+        lambda r: _situacao_operacional(r.get('TAG HGA'), r.get('Situacao Atual')), axis=1
+    )
+    cad = cad[cad['situacao_operacional'].astype(str).str.strip().str.casefold() == 'ativo'].copy()
+
+    ids_ativos = set(cad['inst_id'].dropna().astype(str))
+    hga = hga[hga['inst_id'].isin(ids_ativos)].copy()
 
     raw_data = hga['DATA_']
     if pd.api.types.is_datetime64_any_dtype(raw_data):
@@ -157,13 +180,12 @@ def carregar_bases(dir_dados: str | Path) -> tuple[pd.DataFrame, pd.DataFrame]:
 def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     cad, hga = carregar_bases(dir_dados)
 
-    # Escopo cadastral = todos os instrumentos de monitoramento hidrogeológico do
-    # Complexo Germano. O status cadastral é tratado ANTES do QA/QC: apenas os
-    # instrumentos Ativos entram na avaliação operacional atual. Instrumentos
-    # Tamponados, Descomissionados, Inativos ou Destruídos permanecem disponíveis
-    # para consulta histórica, mas não geram falso alerta por ausência de dados.
+    # Escopo = somente instrumentos ATIVOS de monitoramento hidrogeológico do
+    # Complexo Germano. Inativos, tamponados, descomissionados e destruídos já
+    # foram excluídos em carregar_bases() e não entram em nenhuma saída do app.
     escopo = cad[(cad['Proposito'] == 'Monitoramento Hidrogeologico') &
-                 (cad['Natureza do Ponto'] != 'Cava')].copy()
+                 (cad['Natureza do Ponto'] != 'Cava') &
+                 (~cad['inst_id'].astype(str).str.contains('PVIRTUAL', case=False, na=False))].copy()
 
     rows = []
     eventos = []
@@ -173,7 +195,8 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
         tag = str(c.get('TAG HGA', ''))
         natureza = str(c.get('Natureza do Ponto', ''))
         situacao_cadastro = str(c.get('Situacao Atual', '') or '').strip()
-        ativo = situacao_cadastro.casefold() == 'ativo'
+        situacao_operacional = _situacao_operacional(tag, situacao_cadastro)
+        ativo = situacao_operacional.casefold() == 'ativo'
         virtual = 'PVIRTUAL' in inst
         g_all = hga[hga['inst_id'] == inst].copy()
         futuras = g_all[g_all['data'] > DATA_REF].copy()
@@ -267,7 +290,7 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
         if virtual:
             motivos.append('Ponto virtual do modelo — fora do QA/QC de instrumentação')
         elif not ativo:
-            motivos.append(f'Situação cadastral: {situacao_cadastro or "não informada"} — fora do QA/QC operacional atual')
+            motivos.append(f'Situação operacional: {situacao_operacional or "não informada"} — fora do QA/QC operacional atual')
         else:
             if recebimento == 'SEM DADOS':
                 motivos.append('Ativo no cadastro, sem leituras encontradas na HGA')
@@ -325,6 +348,7 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
             'nome_original': c.get('Nome Original', ''),
             'natureza': natureza,
             'situacao_cadastro': situacao_cadastro,
+            'situacao_operacional': situacao_operacional,
             'situacao_hga_ultima': situacao_hga_ultima,
             'data_atualizacao_cadastro': c.get('Data Atualizacao', pd.NaT),
             'localidade': c.get('Localidade', ''),
