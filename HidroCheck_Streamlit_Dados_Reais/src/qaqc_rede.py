@@ -451,7 +451,8 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
             })
 
     diag = pd.DataFrame(rows).sort_values(['score', 'instrumento'], ascending=[False, True])
-    ev = pd.DataFrame(eventos)
+    event_cols = ["instrumento", "data", "cota_na_m", "evento", "magnitude_aprox_m"]
+    ev = pd.DataFrame(eventos, columns=event_cols)
     return diag, ev, hga
 
 
