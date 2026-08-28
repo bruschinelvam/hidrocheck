@@ -643,7 +643,13 @@ for c in ["repeticao_no_fundo", "zero_auto_persistente"]:
     if c in rede:
         rede[c] = rede[c].map(b)
 
-eventos = pd.read_csv(eventos_path) if eventos_path.exists() else pd.DataFrame()
+if eventos_path.exists():
+    try:
+        eventos = pd.read_csv(eventos_path)
+    except pd.errors.EmptyDataError:
+        eventos = pd.DataFrame(columns=["instrumento", "data", "cota_na_m", "evento", "magnitude_aprox_m"])
+else:
+    eventos = pd.DataFrame(columns=["instrumento", "data", "cota_na_m", "evento", "magnitude_aprox_m"])
 if not eventos.empty:
     eventos = eventos[eventos["instrumento"].astype(str).isin(rede["instrumento"].astype(str))].copy()
     eventos["data"] = pd.to_datetime(eventos["data"], errors="coerce")
