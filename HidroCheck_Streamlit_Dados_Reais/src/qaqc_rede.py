@@ -9,9 +9,10 @@ import numpy as np
 import pandas as pd
 
 DATA_REF = pd.Timestamp('2026-08-28')
-JANELA_QAQC_OUTLIER_DIAS = 180
 JANELA_QAQC_AUTO_DIAS = 90
-JANELA_QAQC_MANUAL_DIAS = 180
+JANELA_QAQC_MANUAL_DIAS = 365
+MIN_SALTO_AUTO_M = 1.0
+MIN_ELEVACAO_MANUAL_M = 0.50
 
 # Escopo espacial do Complexo Germano, definido pela extensão da imagem aérea
 # fornecida para o projeto (SIRGAS 2000 / UTM 23S, EPSG:31983).
@@ -44,18 +45,33 @@ def _norm_tag(value: object) -> str:
 
 
 def _maior_fonte_recente(g: pd.DataFrame) -> str:
+    """Identifica se o instrumento é predominantemente automático ou manual.
+
+    Prioriza as leituras mais recentes. Se o instrumento está sem atualização há
+    algum tempo, usa as últimas leituras disponíveis para não perder a informação
+    de origem justamente quando precisamos classificar um recebimento interrompido.
+    """
     if g.empty:
         return 'Histórico'
-    rec = g[g['data'] >= DATA_REF - pd.Timedelta(days=90)]
-    if rec.empty:
+    base = g[g['tipo_dado'].isin(['Medido Automatico', 'Medido Manual'])].sort_values('data')
+    if base.empty:
         return 'Histórico'
+    rec = base[base['data'] >= DATA_REF - pd.Timedelta(days=180)]
+    if rec.empty:
+        rec = base.tail(30)
     ca = int((rec['tipo_dado'] == 'Medido Automatico').sum())
     cm = int((rec['tipo_dado'] == 'Medido Manual').sum())
-    if ca >= max(3, cm):
+    if ca > cm:
         return 'Automático'
-    if cm:
+    if cm > ca:
         return 'Manual'
-    return 'Automático' if ca else 'Histórico'
+    # Em empate, a origem da última leitura é o melhor retrato operacional.
+    ultimo = str(rec.iloc[-1]['tipo_dado'])
+    if ultimo == 'Medido Automatico':
+        return 'Automático'
+    if ultimo == 'Medido Manual':
+        return 'Manual'
+    return 'Histórico'
 
 
 def _terminal_run(s: pd.DataFrame, col: str = 'na_m') -> tuple[int, int, float | None]:
@@ -73,38 +89,50 @@ def _terminal_run(s: pd.DataFrame, col: str = 'na_m') -> tuple[int, int, float |
     return n, span, float(v)
 
 
-def _conservative_outliers(g: pd.DataFrame, min_jump: float = 2.0) -> pd.DataFrame:
-    """Detecta apenas picos isolados fortes; não remove dados automaticamente."""
-    x = g.dropna(subset=['cota_na_m']).sort_values('data').copy()
-    if len(x) < 8:
-        return x.iloc[0:0]
+def _ultima_variacao_anomala(
+    g: pd.DataFrame,
+    *,
+    somente_elevacao: bool,
+    minimo_m: float,
+    robustez: float = 6.0,
+) -> tuple[bool, float | None, float | None, pd.Timestamp | None, float | None]:
+    """Avalia somente a ÚLTIMA variação recebida, com limiar robusto.
 
-    # Um valor por dia para não confundir manual e automático no mesmo dia.
-    d = x.groupby('data', as_index=False)['cota_na_m'].median()
+    Retorna (anomalia, delta_ultimo_m, limiar_m, data_ultima, cota_ultima).
+    A série histórica não gera alerta por eventos antigos; ela serve de referência
+    para estimar a variabilidade típica das campanhas/leituras anteriores.
+    """
+    x = g.dropna(subset=['cota_na_m', 'data']).sort_values('data').copy()
+    if x.empty:
+        return False, None, None, None, None
+    d = (x.assign(data_dia=x['data'].dt.normalize())
+           .groupby('data_dia', as_index=False)['cota_na_m'].median()
+           .rename(columns={'data_dia': 'data'}))
+    d = d.sort_values('data')
+    if len(d) < 3:
+        last = d.iloc[-1]
+        return False, None, None, pd.Timestamp(last['data']), float(last['cota_na_m'])
+
     vals = d['cota_na_m'].to_numpy(float)
-    if len(vals) < 8:
-        return d.iloc[0:0]
+    delta_ultimo = float(vals[-1] - vals[-2])
+    hist = np.diff(vals[:-1])
+    hist_abs = np.abs(hist[np.isfinite(hist)])
+    if len(hist_abs) >= 3:
+        med = float(np.median(hist_abs))
+        mad = float(np.median(np.abs(hist_abs - med)))
+        sigma = 1.4826 * mad
+        q95 = float(np.quantile(hist_abs, 0.95))
+        limiar = max(float(minimo_m), q95, med + robustez * sigma)
+    else:
+        limiar = float(minimo_m)
 
-    diff = np.diff(vals)
-    med = float(np.median(diff))
-    mad = float(np.median(np.abs(diff - med)))
-    scale = 1.4826 * mad
-    lim = max(float(min_jump), float(np.median(np.abs(diff))) + 10 * scale)
+    if somente_elevacao:
+        flag = delta_ultimo > limiar
+    else:
+        flag = abs(delta_ultimo) > limiar
 
-    idx = []
-    mag = []
-    for i in range(1, len(vals) - 1):
-        d1 = vals[i] - vals[i - 1]
-        d2 = vals[i + 1] - vals[i]
-        retorno = abs(vals[i + 1] - vals[i - 1]) <= max(min_jump, 0.20 * max(abs(d1), abs(d2)))
-        if d1 * d2 < 0 and abs(d1) > lim and abs(d2) > lim and retorno:
-            idx.append(i)
-            mag.append(max(abs(d1), abs(d2)))
-    if not idx:
-        return d.iloc[0:0]
-    out = d.iloc[idx].copy()
-    out['magnitude_aprox_m'] = mag
-    return out
+    last = d.iloc[-1]
+    return bool(flag), delta_ultimo, limiar, pd.Timestamp(last['data']), float(last['cota_na_m'])
 
 
 def _ptr_mais_proximo(c: pd.Series, cad: pd.DataFrame) -> tuple[str, float | None]:
@@ -145,17 +173,13 @@ def carregar_bases(dir_dados: str | Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     # todas as páginas trabalhem com o mesmo universo espacial.
     cad = _filtrar_complexo_germano(cad)
 
-    # Escopo operacional do HidroCheck: SOMENTE instrumentos ativos.
-    # Qualquer item tamponado, descomissionado, inativo, destruído ou com
-    # override operacional diferente de 'Ativo' é excluído antes de todas as
-    # análises e não aparece em mapas, indicadores, exploração ou tendências.
+    # Mantemos TODO o cadastro de Germano para a aba "Explorar instrumento".
+    # O filtro de instrumentos ativos é aplicado apenas no QA/QC e nas análises.
     cad['situacao_operacional'] = cad.apply(
         lambda r: _situacao_operacional(r.get('TAG HGA'), r.get('Situacao Atual')), axis=1
     )
-    cad = cad[cad['situacao_operacional'].astype(str).str.strip().str.casefold() == 'ativo'].copy()
-
-    ids_ativos = set(cad['inst_id'].dropna().astype(str))
-    hga = hga[hga['inst_id'].isin(ids_ativos)].copy()
+    ids_germano = set(cad['inst_id'].dropna().astype(str))
+    hga = hga[hga['inst_id'].isin(ids_germano)].copy()
 
     raw_data = hga['DATA_']
     if pd.api.types.is_datetime64_any_dtype(raw_data):
@@ -180,12 +204,13 @@ def carregar_bases(dir_dados: str | Path) -> tuple[pd.DataFrame, pd.DataFrame]:
 def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     cad, hga = carregar_bases(dir_dados)
 
-    # Escopo = somente instrumentos ATIVOS de monitoramento hidrogeológico do
-    # Complexo Germano. Inativos, tamponados, descomissionados e destruídos já
-    # foram excluídos em carregar_bases() e não entram em nenhuma saída do app.
-    escopo = cad[(cad['Proposito'] == 'Monitoramento Hidrogeologico') &
-                 (cad['Natureza do Ponto'] != 'Cava') &
-                 (~cad['inst_id'].astype(str).str.contains('PVIRTUAL', case=False, na=False))].copy()
+    # QA/QC operacional = SOMENTE instrumentos ativos. Inativos, tamponados,
+    # descomissionados e destruídos ficam fora de mapas, alertas, indicadores e
+    # tendência; permanecem apenas disponíveis para consulta em "Explorar instrumento".
+    cad_ativos = cad[cad['situacao_operacional'].astype(str).str.strip().str.casefold() == 'ativo'].copy()
+    escopo = cad_ativos[(cad_ativos['Proposito'] == 'Monitoramento Hidrogeologico') &
+                        (cad_ativos['Natureza do Ponto'] != 'Cava') &
+                        (~cad_ativos['inst_id'].astype(str).str.contains('PVIRTUAL', case=False, na=False))].copy()
 
     rows = []
     eventos = []
@@ -245,45 +270,60 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
 
         profundidade = pd.to_numeric(c.get('Profundidade(m)'), errors='coerce')
 
-        # O QA/QC operacional olha para o estado ATUAL do instrumento, e não para
-        # toda a série histórica. A série completa fica preservada para a análise
-        # hidrogeológica (rebaixamento, recuperação, chuva, bombeamento etc.).
-        janela_flat = JANELA_QAQC_AUTO_DIAS if fonte == 'Automático' else JANELA_QAQC_MANUAL_DIAS
-        primary_recente = primary[primary['data'] >= DATA_REF - pd.Timedelta(days=janela_flat)].copy()
+        # ALERTA OPERACIONAL = estado mais recente (ou o último valor recebido se
+        # o canal estiver interrompido). Eventos antigos não deixam o instrumento
+        # amarelo/vermelho hoje; continuam disponíveis na série histórica.
+        ancora = ultima if pd.notna(ultima) else DATA_REF
+        janela = JANELA_QAQC_AUTO_DIAS if fonte == 'Automático' else JANELA_QAQC_MANUAL_DIAS
+        primary_recente = primary[primary['data'] >= ancora - pd.Timedelta(days=janela)].copy()
         rep_n, rep_dias, rep_val = _terminal_run(primary_recente, 'na_m')
         rep_fundo = bool(pd.notna(profundidade) and rep_val is not None and abs(rep_val - profundidade) <= 0.10)
 
-        # Poços tubulares têm comportamento operacional próprio. Zero automático persistente
-        # é reportado como integração/semântica do canal, e não como "sensor travado".
-        zero_auto = False
+        # Instrumento manual: pouca variação, valores repetidos e baixa frequência
+        # são esperados e NÃO geram flatline. Só sinalizamos uma ELEVAÇÃO recente
+        # da cota de NA que esteja claramente fora da variabilidade usual.
         travado = False
-        if ativo and natureza == 'Poco Tubular':
-            ga = g[(g['tipo_dado'] == 'Medido Automatico') & g['na_m'].notna() &
-                   (g['data'] >= DATA_REF - pd.Timedelta(days=JANELA_QAQC_AUTO_DIAS))].copy()
+        elevacao_manual = False
+        salto_auto = False
+        delta_ultimo = None
+        limiar_delta = None
+        data_evento = None
+        cota_evento = None
+
+        zero_auto = False
+        if natureza == 'Poco Tubular':
+            ga = g[(g['tipo_dado'] == 'Medido Automatico') & g['na_m'].notna()].copy()
+            if len(ga):
+                anc_a = ga['data'].max()
+                ga = ga[ga['data'] >= anc_a - pd.Timedelta(days=JANELA_QAQC_AUTO_DIAS)]
             z_n, z_dias, z_val = _terminal_run(ga, 'na_m')
             zero_auto = bool(z_val is not None and abs(z_val) < 1e-9 and z_n >= 7 and z_dias >= 7)
-        elif ativo and not virtual and not rep_fundo:
-            if fonte == 'Automático':
+        elif fonte == 'Automático':
+            if not rep_fundo:
                 travado = rep_n >= 10 and rep_dias >= 10
-            elif fonte == 'Manual':
-                travado = rep_n >= 6 and rep_dias >= 90
+            salto_auto, delta_ultimo, limiar_delta, data_evento, cota_evento = _ultima_variacao_anomala(
+                primary, somente_elevacao=False, minimo_m=MIN_SALTO_AUTO_M, robustez=7.0
+            )
+        elif fonte == 'Manual':
+            elevacao_manual, delta_ultimo, limiar_delta, data_evento, cota_evento = _ultima_variacao_anomala(
+                primary, somente_elevacao=True, minimo_m=MIN_ELEVACAO_MANUAL_M, robustez=5.0
+            )
 
-        # Outliers também são um alerta RECENTE. Eventos antigos permanecem visíveis
-        # na série histórica, mas não geram alerta operacional atual.
-        if (not ativo) or natureza == 'Poco Tubular':
-            out = g.iloc[0:0].copy()
-        else:
-            recent_outlier = primary[primary['data'] >= DATA_REF - pd.Timedelta(days=JANELA_QAQC_OUTLIER_DIAS)].copy()
-            out = _conservative_outliers(recent_outlier, min_jump=2.0)
+        ptr_proximo, dist_ptr_m = _ptr_mais_proximo(c, cad_ativos)
 
-        ptr_proximo, dist_ptr_m = _ptr_mais_proximo(c, cad)
-
-        na_neg = int((pd.to_numeric(g['na_m'], errors='coerce') < 0).sum()) if len(g) else 0
+        # Checagens físicas também consideram o ÚLTIMO registro recebido, não
+        # contagens acumuladas de anos anteriores.
+        na_neg = 0
         mismatch = 0
-        if len(g):
-            test = g[['na_m', 'cota_poco_m', 'cota_na_m']].apply(pd.to_numeric, errors='coerce').dropna()
-            if len(test):
-                mismatch = int((((test['cota_poco_m'] - test['na_m']) - test['cota_na_m']).abs() > 0.05).sum())
+        lastrow = primary.dropna(subset=['data']).sort_values('data').tail(1)
+        if len(lastrow):
+            lr = lastrow.iloc[0]
+            na_last = pd.to_numeric(lr.get('na_m'), errors='coerce')
+            cp_last = pd.to_numeric(lr.get('cota_poco_m'), errors='coerce')
+            cn_last = pd.to_numeric(lr.get('cota_na_m'), errors='coerce')
+            na_neg = int(pd.notna(na_last) and na_last < 0)
+            if pd.notna(na_last) and pd.notna(cp_last) and pd.notna(cn_last):
+                mismatch = int(abs((cp_last - na_last) - cn_last) > 0.05)
 
         motivos = []
         score = 0
@@ -303,25 +343,28 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
                 score += 3
 
             if travado:
-                motivos.append(f'Últimas leituras possivelmente travadas: {rep_n} valores idênticos consecutivos por {rep_dias} dias')
+                motivos.append(f'Últimas leituras automáticas possivelmente travadas: {rep_n} valores idênticos consecutivos por {rep_dias} dias')
                 score += 7
-            if rep_fundo and rep_n >= 4:
-                motivos.append(f'Leitura repetida no limite de profundidade ({rep_val:.2f} m ≈ {profundidade:.2f} m); pode indicar ponto seco')
+            if fonte == 'Automático' and rep_fundo and rep_n >= 4:
+                motivos.append(f'Última sequência no limite de profundidade ({rep_val:.2f} m ≈ {profundidade:.2f} m); pode indicar ponto seco')
                 score += 1
+            if salto_auto and delta_ultimo is not None and limiar_delta is not None:
+                motivos.append(f'Última leitura automática apresentou salto de {delta_ultimo:+.2f} m, acima do padrão recente (limiar {limiar_delta:.2f} m)')
+                score += 3
+            if elevacao_manual and delta_ultimo is not None and limiar_delta is not None:
+                motivos.append(f'Última campanha manual apresentou elevação de cota de +{delta_ultimo:.2f} m, acima do comportamento recente esperado (limiar {limiar_delta:.2f} m)')
+                score += 3
             if zero_auto:
                 motivos.append('Zero automático persistente em poço tubular; conferir significado/integração do canal')
                 score += 3
-            if len(out):
-                motivos.append(f'{len(out)} outlier(s) forte(s) nas últimas {JANELA_QAQC_OUTLIER_DIAS} dias para revisão')
-                score += 1 if len(out) <= 2 else 2
             if len(futuras):
                 motivos.append(f'{len(futuras)} registro(s) com data futura')
                 score += 3
             if na_neg:
-                motivos.append(f'{na_neg} leitura(s) de NA negativa(s)')
+                motivos.append('Última leitura apresenta NA negativo')
                 score += 3
             if mismatch:
-                motivos.append(f'{mismatch} inconsistência(s) entre NA, cota do poço e cota de NA')
+                motivos.append('Última leitura apresenta inconsistência entre NA, cota do poço e cota de NA')
                 score += 2
 
         # Prioridade alta é reservada a sinal atual e diretamente acionável:
@@ -366,11 +409,15 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
             'repeticao_final_dias': rep_dias,
             'repeticao_no_fundo': rep_fundo,
             'zero_auto_persistente': zero_auto,
-            'outliers_fortes': int(len(out)),
+            'outliers_fortes': int(bool(salto_auto or elevacao_manual)),
+            'salto_auto_recente': bool(salto_auto),
+            'elevacao_manual_anomala': bool(elevacao_manual),
+            'variacao_ultima_m': delta_ultimo,
+            'limiar_variacao_m': limiar_delta,
             'datas_futuras': int(len(futuras)),
             'na_negativo': na_neg,
             'inconsistencia_cota': mismatch,
-            'janela_qaqc_dias': int(janela_flat),
+            'janela_qaqc_dias': int(janela),
             'ptr_mais_proximo': ptr_proximo,
             'dist_ptr_m': dist_ptr_m,
             'status_qaqc': status,
@@ -378,13 +425,21 @@ def diagnosticar(dir_dados: str | Path = 'data') -> tuple[pd.DataFrame, pd.DataF
             'motivos': ' | '.join(motivos) if motivos else 'Sem sinais automáticos relevantes',
         })
 
-        for _, rr in out.iterrows():
+        if salto_auto and data_evento is not None:
             eventos.append({
                 'instrumento': tag,
-                'data': rr['data'],
-                'cota_na_m': rr['cota_na_m'],
-                'evento': 'Outlier pontual forte',
-                'magnitude_aprox_m': rr.get('magnitude_aprox_m', np.nan),
+                'data': data_evento,
+                'cota_na_m': cota_evento,
+                'evento': 'Salto recente fora do padrão',
+                'magnitude_aprox_m': abs(delta_ultimo) if delta_ultimo is not None else np.nan,
+            })
+        if elevacao_manual and data_evento is not None:
+            eventos.append({
+                'instrumento': tag,
+                'data': data_evento,
+                'cota_na_m': cota_evento,
+                'evento': 'Elevação manual recente fora do padrão',
+                'magnitude_aprox_m': delta_ultimo if delta_ultimo is not None else np.nan,
             })
         for _, rr in futuras.iterrows():
             eventos.append({
