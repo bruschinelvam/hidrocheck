@@ -1,0 +1,37 @@
+HIDROCHECK v23.5 — UPLOAD DE HGA POR SESSÃO
+
+Esta versão foi criada exclusivamente a partir da v23_4_INA_PZ_PM_Ativos.
+Os pacotes anteriores permanecem preservados.
+
+1. Extraia todo o ZIP em uma nova pasta.
+2. Abra ABRIR_HIDROCHECK.bat.
+3. Aguarde a abertura de http://127.0.0.1:8501 no navegador.
+4. Mantenha a janela de execução aberta enquanto usar o aplicativo.
+
+A página inicial é Avaliação técnica. Cada linha apresenta o último valor e sua
+data, o Δ Cota quando calculável, a situação explicada e a ação recomendada. Um
+valor desatualizado continua visível como histórico, mas não é tratado como cota
+atual nem utilizado no cálculo do Δ.
+
+A seção Situação dos instrumentos ativos apresenta somente instrumentos com
+situação operacional Ativo. Itens descomissionados, tamponados ou mantidos para
+consulta histórica não entram nessa síntese.
+
+A seção Itens ativos para acompanhamento e revisão segue o mesmo critério,
+inclusive quando a opção Mostrar todos é utilizada.
+
+Para a síntese executiva, um instrumento precisa estar cadastrado como Ativo e
+ter ao menos uma leitura válida no ano da data de corte. Resultados, mapas de
+rebaixamento, rankings e avaliação técnica incluem INAs, PZs e PMs. PTRs são
+mantidos somente como contexto espacial e não participam do cálculo do Δ Cota.
+
+O padrão visual, os mapas e a metodologia Δ Cota foram preservados.
+
+Para usar uma HGA atualizada, abra Atualização da base, selecione uma planilha
+.xlsx completa no mesmo formato de HGA-28082026.xlsx e aguarde a confirmação.
+A base enviada vale somente durante a sessão e não é salva. Se o arquivo for
+incompatível, o HidroCheck mantém a base padrão. Use Usar base padrão para
+retornar à base incorporada sem reiniciar o aplicativo.
+
+Antes do uso operacional, leia METODOLOGIA_DELTA_COTA_v23.md e
+VALIDACAO_UPLOAD_v23_5.md.
