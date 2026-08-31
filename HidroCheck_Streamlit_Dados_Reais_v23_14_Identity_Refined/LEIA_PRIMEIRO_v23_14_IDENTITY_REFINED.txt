@@ -1,0 +1,29 @@
+HIDROCHECK v23_14 — IDENTITY REFINED
+
+Base oficial preservada
+------------------------
+Esta versão foi criada exclusivamente a partir de
+HidroCheck_Streamlit_Dados_Reais_v23_13_QAQC.zip.
+SHA-256 da base recebida:
+73F54029E50C68DA8B4F90290070633F6D16D817CE962BCCD354056739E71141
+
+Escopo desta versão
+-------------------
+- Refinamento visual do header e da Home.
+- Navegação horizontal e componentes harmonizados.
+- CSS consolidado em um único sistema ativo.
+- Estados visuais do upload HGA harmonizados.
+- Ajustes de tipografia, bordas, espaçamento e responsividade.
+
+Preservação funcional
+---------------------
+Não foram alterados metodologia, QA/QC, cálculos, filtros, mapas, dados,
+regras de classificação, validações, mensagens técnicas ou fluxo do upload.
+Os módulos src/delta_cota.py e src/hga_upload.py permanecem idênticos à v23_13.
+
+Validação
+---------
+- 45 testes automatizados aprovados.
+- Home validada em 1366x768 e 900x700.
+- Todas as páginas internas foram abertas e verificadas.
+- Upload verificado nos estados de erro, sucesso e restauração da base padrão.

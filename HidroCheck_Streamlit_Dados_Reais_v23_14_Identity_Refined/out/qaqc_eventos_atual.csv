@@ -1,0 +1,26 @@
+﻿instrumento,data,cota_na_m,evento,magnitude_aprox_m
+0027-INA-054,2026-08-27,919.676,Revisão recomendada — Leituras consecutivas permaneceram constantes por período prolongado. Motivo da priorização: repetição prolongada há 271 dias.,
+0028-INA-137,2026-08-26,975.571878333333,Revisão recomendada — Mudança recente no comportamento das leituras. Motivo da priorização: mais de um sinal simultâneo.,0.3135849999999891
+0029-INA-120,2026-08-27,956.47327,Revisão recomendada — Leituras consecutivas permaneceram constantes por período prolongado. Motivo da priorização: repetição prolongada há 57 dias.,
+30LI002,2026-08-27,923.770516,Revisão recomendada — Leituras consecutivas permaneceram constantes por período prolongado. Motivo da priorização: repetição prolongada há 85 dias.,
+G00-11PTR009,2026-08-27,959.577,Revisão recomendada — Leituras consecutivas permaneceram constantes por período prolongado. Motivo da priorização: repetição prolongada há 1937 dias.,
+G00-11PTR010,2026-08-27,982.033,Revisão recomendada — Leituras consecutivas permaneceram constantes por período prolongado. Motivo da priorização: repetição prolongada há 1937 dias.,
+G00-11PTR011,2026-08-27,1040.36,Revisão recomendada — Leituras consecutivas permaneceram constantes por período prolongado. Motivo da priorização: repetição prolongada há 1207 dias.,
+G00-11PTR012,2026-08-27,1018.098,Revisão recomendada — Leituras consecutivas permaneceram constantes por período prolongado. Motivo da priorização: repetição prolongada há 1937 dias.,
+CTHTLCEPZ003,2020-08-17,1203.753,Sem atualização recente — Não há leitura atual dentro da cadência considerada.,-3.480000000000018
+CTHTLCEPZ004,2020-08-17,1263.79,Sem atualização recente — Não há leitura atual dentro da cadência considerada.,-6.289999999999964
+0027-INA-034,2026-08-27,926.872666666667,Acompanhar — A série voltou a variar recentemente e ainda aguarda leituras adicionais coerentes.,
+0027-INA-042,2026-08-22,899.645042125,Acompanhar — A série voltou a variar recentemente e ainda aguarda leituras adicionais coerentes.,0.5982891666659498
+0027-INA-073,2026-08-20,900.865,Acompanhar — Uma campanha manual ficou fora do padrão e as campanhas seguintes retornaram ao regime anterior.,-4.199999999999932
+0027-INA-085,2026-08-12,907.542368708333,Acompanhar — A série voltou a variar recentemente e ainda aguarda leituras adicionais coerentes.,6.805728708332936
+0027-INA-107,2026-08-09,924.322855525,Acompanhar — Leitura recente distinta do comportamento habitual. A continuidade da série permitirá avaliar sua representatividade.,-0.19274746666690135
+0027-INA-136,2026-08-12,912.413370791667,Acompanhar — Leitura recente distinta do comportamento habitual. A continuidade da série permitirá avaliar sua representatividade.,1.3374950833330104
+0028-INA-139,2026-08-13,969.857022375,Acompanhar — Leitura recente distinta do comportamento habitual. A continuidade da série permitirá avaliar sua representatividade.,-0.5176341249999723
+0029-INA-154,2026-08-25,967.280432916667,Acompanhar — Mudança recente no comportamento das leituras.,-0.0970200595239703
+0029-PZ-096B,2026-08-27,1013.73157833333,Acompanhar — As leituras recentes apresentam maior oscilação em relação ao comportamento habitual.,
+1331-INA-163A,2026-07-22,1009.24,Acompanhar — A profundidade cadastrada é incompatível com boa parte da série. As leituras foram mantidas; o cadastro é o dado a conferir.,
+1336-PM-013,2026-08-16,804.48,Acompanhar — A campanha manual mais recente ficou distante do comportamento habitual do instrumento e ainda não há campanha posterior que a confirme.,-1.009999999999991
+30LI008,2026-08-22,1012.134544506,Acompanhar — Mudança recente no comportamento das leituras.,-6.40885676708001
+30LI010,2026-08-27,1008.478569841,Acompanhar — Leituras consecutivas permaneceram constantes por período prolongado.,
+G00-11PTR016,2026-08-27,965.709860539754,Acompanhar — As leituras recentes apresentam maior oscilação em relação ao comportamento habitual.,
+G00-11PTR020,2026-08-27,1046.92418268333,Acompanhar — Há leituras fora da faixa física esperada para o instrumento.,

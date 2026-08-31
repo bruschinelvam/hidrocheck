@@ -1,0 +1,21 @@
+HIDROCHECK v23.12 — MAPAS, ALERTAS E AJUDA
+
+Versão separada da v23.11. O pacote anterior permanece preservado.
+
+1. Extraia todo o ZIP em uma nova pasta.
+2. Abra ABRIR_HIDROCHECK.bat.
+3. Aguarde a abertura de http://127.0.0.1:8501.
+
+A legenda do mapa de Δ Cota mostra somente INA/PZ/PM e PTR. Os pontos sem
+comparação permanecem consultáveis no mapa, mas sem item próprio na legenda.
+Os condicionantes não recebem mais símbolo especial nos mapas.
+
+Todo instrumento cadastrado como condicionante permanece na seção própria e
+recebe alerta institucional no explorador. Quando houver redução de cota, o
+alerta informa essa condição; isso não altera a classificação técnica de QA/QC.
+
+Os símbolos de ajuda explicam somente os conceitos centrais: cota atual,
+referência, Δ Cota e estados de QA/QC. A metodologia completa continua na página
+Metodologia.
+
+Dados, metodologia, cálculos, QA/QC e upload HGA não foram modificados.

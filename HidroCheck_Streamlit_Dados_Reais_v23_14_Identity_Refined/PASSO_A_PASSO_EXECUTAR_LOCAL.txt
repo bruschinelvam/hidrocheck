@@ -1,0 +1,26 @@
+HIDROCHECK — PASSO A PASSO PARA EXECUTAR LOCALMENTE
+
+Opção recomendada
+1. Extraia todo o conteúdo do ZIP para uma pasta local.
+2. Clique duas vezes em ABRIR_HIDROCHECK.bat.
+3. Aguarde a abertura do navegador no endereço http://127.0.0.1:8501.
+4. Mantenha a janela do HidroCheck aberta enquanto estiver usando o aplicativo.
+5. Para encerrar, pressione Ctrl+C na janela do HidroCheck.
+
+Execução manual
+1. Abra o PowerShell nesta pasta.
+2. Execute: py -m pip install -r requirements.txt
+3. Execute: py -m streamlit run streamlit_app.py --server.address 127.0.0.1
+
+Verificação rápida
+- A Home/Índice deve abrir como página inicial.
+- Abra Resultados, Avaliação técnica, Explorar instrumento,
+  Confiabilidade dos dados e Metodologia; use Início para retornar à Home.
+- Na Home ou na barra interna, abra Atualizar base para enviar uma HGA completa
+  em .xlsx. Use Usar base padrão para restaurar a base incorporada.
+
+IMPORTANTE
+- O aplicativo funciona localmente e não exige GitHub ou Streamlit Cloud.
+- Não publique o conteúdo, pois o pacote contém os dados reais fornecidos para
+  o projeto.
+- A logomarca é utilizada somente no cabeçalho da ferramenta para uso interno.
